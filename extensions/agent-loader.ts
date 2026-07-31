@@ -117,8 +117,10 @@ async function showAgentCard(ctx: ExtensionContext, agent: string): Promise<void
 }
 
 export default function (pi: ExtensionAPI) {
-  // 启动时展示当前 agent 的能力卡片
-  pi.on("session_start", async (_event, ctx) => {
+  // 卡片在 resources_discover 渲染（startup/reload）——此时 dpi-sync 的
+  // session_start pull 已 await 完成，读到的是 GitHub 最新声明（时序确定）
+  pi.on("resources_discover", async (event, ctx) => {
+    if (event.reason !== "startup" && event.reason !== "reload") return;
     if (!repoPath()) return;
     showAgentCard(ctx, currentAgent());
   });

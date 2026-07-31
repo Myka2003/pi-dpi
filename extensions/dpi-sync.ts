@@ -80,11 +80,12 @@ async function autoSync(onStartup: boolean): Promise<void> {
 }
 
 export default function (pi: ExtensionAPI) {
+  // 所有会话启动/切换/重载都先同步远端（reload 时用户期望看到 GitHub 最新声明）；
+  // pull 在 session_start 内 await 完成，resources_discover 在其后执行（时序确定）
   pi.on("session_start", async (event, ctx) => {
-    if (event.reason !== "startup") return;
     try {
       await autoSync(true);
-      // 启动后提醒未推送的提交（断网/冲突遗留），用户能确认保存状态
+      // 启动/重载后提醒未推送的提交（断网/冲突遗留），用户能确认保存状态
       const cfg = loadConfig();
       if (cfg.repoUrl) {
         const pending = await pendingCommits(cfg);
