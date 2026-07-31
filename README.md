@@ -1,5 +1,8 @@
 # pi-dpi — dπ: Decouple & Distribute π
 
+![pi-dpi](https://raw.githubusercontent.com/oc101363-creator/pi-dpi/main/assets/screenshot.png)
+
+
 **dπ = 拆解 π = decouple & distribute.** pi-dpi is an extension plugin for the pi coding
 agent (pure engine, no agent content): it splits the "agent world" — personas, skills,
 prompts, session archives — out of the pi package into an independent **content repository**
@@ -102,7 +105,7 @@ A content repo is an ordinary git repo (**keep it Private** — session archives
 │       └── prompts/        # Agent prompt templates (xxx.md → /xxx)
 ├── skills/                 # Skill registry: flat <name>/SKILL.md entries
 ├── extensions/             # Extension registry: flat <name>.ts or <name>/index.ts dirs
-├── machines/               # Per-machine overrides: <hostname>.json (proxy, recordSessions)
+├── machines/               # Per-machine overrides: <hostname>.json (proxy, recordSessions sync across machines)
 ├── sessions/<agent>/       # Session archives by agent (_legacy/ holds old flat archives)
 ├── docs/plans|specs/       # Workflow docs: spec (design) then plan (execution)
 └── themes/                 # Optional pi themes
@@ -138,16 +141,6 @@ content registry, loaded per agent via `agent.json` declaration + settings white
 The engine overlays `machines/<hostname>.json` (normalized lowercase `[a-z0-9-]`) on top of
 the global config. Whitelisted fields: `proxy`, `recordSessions` — machine-specific settings
 travel with the repo, new machines get them automatically.
-
-## Config & data locations
-
-All stored under `~/.pi/agent/dpi/` (0700):
-
-- `config.json`: repoUrl / remoteKind / repoPath / branch / proxy / currentAgent / recordSessions
-- `token`: access token (0600; single line for GitHub, two lines username+token for generic HTTPS)
-- `repo/`: local clone of the content repo
-
-Set `PI_CODING_AGENT_DIR` to override the agent dir.
 
 ## ⚠️ Privacy
 

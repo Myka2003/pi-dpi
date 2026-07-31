@@ -1,5 +1,8 @@
 # pi-dpi — dπ：拆解 π
 
+![pi-dpi](https://raw.githubusercontent.com/oc101363-creator/pi-dpi/main/assets/screenshot.png)
+
+
 > English: [README.md](README.md) | 中文: 本文件
 
 **dπ = 拆解 π = 解耦分发。** pi-dpi 是 pi coding agent 的一个扩展插件（纯引擎，不含任何
