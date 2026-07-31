@@ -12,8 +12,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { hasToken, loadConfig, remoteNeedsToken, tokenPath } from "../src/config.ts";
+import { join } from "node:path";import { hasToken, loadConfig, remoteNeedsToken, tokenPath } from "../src/config.ts";
 import { GIT_TIMEOUT, gitIn } from "../src/git.ts";
 import type { GitOptions } from "../src/git.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
@@ -29,9 +28,16 @@ interface SyncTarget {
   opts: GitOptions;
 }
 
+/** rebase 冲突中断检测：存在 rebase 元数据目录即处于未完成的重放状态 */
+function rebaseInProgress(repoPath: string): boolean {
+  return (
+    existsSync(join(repoPath, ".git", "rebase-merge")) ||
+    existsSync(join(repoPath, ".git", "rebase-apply"))
+  );
+}
+
 /** 同步前提检查：已绑定 + 需要令牌的类型已登录 + 本地仓库存在；不满足返回 null */
-function target(): SyncTarget | null {
-  const cfg = loadConfig();
+function target(): SyncTarget | null {  const cfg = loadConfig();
   if (!cfg.repoUrl || (remoteNeedsToken(cfg.remoteKind) && !hasToken())) return null;
   if (!existsSync(join(cfg.repoPath, ".git"))) return null;
   // ssh/local 零凭证：不注入 credential helper，也不走 http 代理
@@ -91,6 +97,13 @@ export default function (pi: ExtensionAPI) {
         const pending = await pendingCommits(cfg);
         if (pending !== null && pending > 0) {
           ctx.ui.notify(`⚠ ${pending} 个提交未推送（内容仓库），退出时自动重试`, "warning");
+        }
+        // rebase 冲突中断：同步已停摆，必须人工解决——亮出冲突状态
+        if (rebaseInProgress(cfg.repoPath)) {
+          ctx.ui.notify(
+            "⚠ 内容仓库存在未解决的 rebase 冲突，同步已暂停；请手动解决冲突后执行 /dpi-sync",
+            "warning",
+          );
         }
       }
     } catch {

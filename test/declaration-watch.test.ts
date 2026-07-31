@@ -42,3 +42,20 @@ describe("DeclarationWatch agent.json 变更检测", () => {
     rmSync(dir, { recursive: true });
   });
 });
+
+describe("DeclarationWatch 内容对比（非 mtime）", () => {
+  it("内容不变但 mtime 变化不算变更（防 reload 循环）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dpi-test-"));
+    const agents = join(dir, "agents", "coder");
+    mkdirSync(agents, { recursive: true });
+    const f = join(agents, "agent.json");
+    writeFileSync(f, "{\"skills\":[\"commit\"]}\n");
+    const w = new DeclarationWatch();
+    w.changed(dir, "coder");
+    // 模拟 git rebase 重写 mtime（内容相同）
+    const { utimesSync } = require("node:fs") as typeof import("node:fs");
+    utimesSync(f, new Date(), new Date());
+    expect(w.changed(dir, "coder")).toBe(false);
+    rmSync(dir, { recursive: true });
+  });
+});

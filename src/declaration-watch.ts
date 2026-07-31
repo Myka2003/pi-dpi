@@ -11,27 +11,27 @@
  *
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展入口，无 default 导出会报错）。
  */
-import { statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export class DeclarationWatch {
-  private last = new Map<string, string>(); // 文件绝对路径 -> mtimeMs:size
+  private last = new Map<string, string>(); // 文件绝对路径 -> 内容（空串=不存在）
 
   /**
-   * 检测 agent.json 是否自上次调用以来发生变化。
+   * 检测 agent.json 是否自上次调用以来发生变化（内容对比，非 mtime——
+   * git pull/rebase 会重写 mtime 但内容不变，用 mtime 会误触发 reload 循环）。
    * 首次调用只记录基线，返回 false（避免启动即误触发）。
    */
   changed(repoPath: string, agent: string): boolean {
     const file = join(repoPath, "agents", agent, "agent.json");
-    let key: string | null = null;
+    let content: string | null = null;
     try {
-      const st = statSync(file);
-      key = `${st.mtimeMs}:${st.size}`;
+      content = readFileSync(file, "utf-8");
     } catch {
-      key = null; // 文件不存在（agent 目录缺失）
+      content = null; // 文件不存在
     }
     const prev = this.last.get(file);
-    this.last.set(file, key ?? "");
-    return prev !== undefined && prev !== (key ?? "");
+    this.last.set(file, content ?? "");
+    return prev !== undefined && prev !== (content ?? "");
   }
 }
