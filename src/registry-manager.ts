@@ -10,6 +10,8 @@
  * 由 skill-manager.ts / ext-manager.ts 薄壳调用。
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig, readAgentManifest, syncExtensionFilter } from "./config.ts";
 import { errMsg, safeAgentName, scanManifestAgents } from "./common.ts";
 import { showVimListPicker, type VimListItem } from "./vim-list-picker.ts";
@@ -32,9 +34,38 @@ export interface RegistryManagerConfig {
   writeDeclared(repo: string, agent: string, names: string[]): boolean;
   /** 删除注册表条目（rm 目录或文件） */
   deletePath(repo: string, name: string): void;
+  /** 配套资源检查（防屎山）：扩展 ↔ 同名技能的联动删除/提示 */
+  companion?: {
+    /** 另一侧的注册表目录名（扩展→"skills"，技能→"extensions"） */
+    registryDir: string;
+    /** 另一侧的 kindLabel（提示文案用） */
+    companionLabel: string;
+    /** 另一侧条目的形态：扩展=目录或文件，技能=目录 */
+    entryExists(repo: string, name: string): boolean;
+  };
 }
 
-/** 删除流程：confirm 确认 → deletePath + 从所有 agent 声明中剔除；取消返回 false */
+/** 从所有 agent 的指定声明字段中剔除一个名字；返回受影响 agent 数 */
+function stripFromAllAgents(
+  repo: string,
+  rc: RegistryManagerConfig,
+  field: "skills" | "extensions",
+  name: string,
+): number {
+  let affected = 0;
+  for (const agent of scanManifestAgents(repo)) {
+    const manifest = readAgentManifest(repo, agent);
+    const list = manifest[field];
+    if (!list.includes(name)) continue;
+    if (rc.writeDeclared(repo, agent, list.filter((s) => s !== name))) affected++;
+  }
+  return affected;
+}
+
+/**
+ * 删除流程：confirm 确认 → deletePath + 从所有 agent 声明中剔除；
+ * 有同名配套资源（扩展↔技能）时联动处理，防止「删了扩展技能还在」的孤儿屎山。
+ */
 async function deleteFlow(
   ctx: ExtensionCommandContext,
   repo: string,
@@ -42,9 +73,17 @@ async function deleteFlow(
   name: string,
 ): Promise<boolean> {
   if (!/^[\w-]+$/.test(name)) return false;
+  // 防屎山：删除前检查同名配套资源，一起确认
+  const companion = rc.companion;
+  const hasCompanion =
+    companion && companion.entryExists(repo, name) &&
+    existsSync(join(repo, companion.registryDir, name));
+  const companionNote = hasCompanion
+    ? `\n\n⚠ 发现同名${companion!.companionLabel}（${companion!.registryDir}/${name}/），将一并删除（同名约定：${rc.kindLabel}与配套${companion!.companionLabel}同名联动）`
+    : "";
   const ok = await ctx.ui.confirm(
     `删除${rc.kindLabel}`,
-    `删除该${rc.kindLabel}（${name}）并从所有 agent 声明中移除（git 可恢复）。确认？`,
+    `删除该${rc.kindLabel}（${name}）并从所有 agent 声明中移除（git 可恢复）。${companionNote}确认？`,
   );
   if (!ok) return false;
   try {
@@ -53,15 +92,26 @@ async function deleteFlow(
     ctx.ui.notify(`删除失败：${errMsg(e)}`, "error");
     return false;
   }
-  // 同步剔除所有 agent 的声明，避免残留指向已删除条目的名字
-  let affected = 0;
-  for (const agent of scanManifestAgents(repo)) {
-    const manifest = readAgentManifest(repo, agent);
-    const list = manifest[rc.declaredField];
-    if (!list.includes(name)) continue;
-    if (rc.writeDeclared(repo, agent, list.filter((s) => s !== name))) affected++;
+  let affected = stripFromAllAgents(repo, rc, rc.declaredField, name);
+  let companionAffected = 0;
+  // 联动删除同名配套资源（扩展↔技能），并从对应声明字段剔除
+  if (hasCompanion && companion) {
+    try {
+      rmSync(join(repo, companion.registryDir, name), { recursive: true, force: true });
+      const companionField = rc.declaredField === "skills" ? "extensions" : "skills";
+      const companionRc = {
+        ...rc,
+        declaredField: companionField as "skills" | "extensions",
+      };
+      companionAffected = stripFromAllAgents(repo, companionRc, companionField, name);
+    } catch {
+      // 配套删除失败不阻断主删除（残留由下次操作处理）
+    }
   }
-  ctx.ui.notify(`已删除 ${name}（影响 ${affected} 个 agent）`, "info");
+  ctx.ui.notify(
+    `已删除 ${name}（影响 ${affected} 个 agent${hasCompanion ? `，配套${companion?.companionLabel}联动删除影响 ${companionAffected} 个` : ""}）`,
+    "info",
+  );
   return true;
 }
 

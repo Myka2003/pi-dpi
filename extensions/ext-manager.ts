@@ -45,7 +45,19 @@ const config: RegistryManagerConfig = {
   scanRegistry: scanRegistryExtensions,
   readDeclared: (repo, agent) => readAgentManifest(repo, agent).extensions,
   writeDeclared: writeAgentManifestExtensions,
-  deletePath: (repo, name) => rmSync(join(repo, "extensions", `${name}.ts`), { force: true }),
+  deletePath: (repo, name) => {
+    const file = join(repo, "extensions", `${name}.ts`);
+    if (existsSync(file)) {
+      rmSync(file, { force: true }); // 单文件扩展
+    } else {
+      rmSync(join(repo, "extensions", name), { recursive: true, force: true }); // 目录型扩展
+    }
+  },
+  companion: {
+    registryDir: "skills",
+    companionLabel: "技能",
+    entryExists: (repo, name) => existsSync(join(repo, "skills", name, "SKILL.md")),
+  },
 };
 
 export default function (pi: ExtensionAPI) {

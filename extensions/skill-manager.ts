@@ -65,6 +65,13 @@ const config: RegistryManagerConfig = {
   writeDeclared: writeAgentManifestSkills,
   deletePath: (repo, name) =>
     rmSync(join(repo, "skills", name), { recursive: true, force: true }),
+  companion: {
+    registryDir: "extensions",
+    companionLabel: "扩展",
+    entryExists: (repo, name) =>
+      existsSync(join(repo, "extensions", `${name}.ts`)) ||
+      existsSync(join(repo, "extensions", name, "index.ts")),
+  },
 };
 
 export default function (pi: ExtensionAPI) {
