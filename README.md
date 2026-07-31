@@ -1,7 +1,7 @@
 # pi-dpi — dπ：拆解 π
 
 **dπ = 拆解 π = 解耦分发。** pi-dpi 是 pi coding agent 的一个扩展插件（纯引擎，不含任何
-agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、技能、提示词、记忆、会话存档
+agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、技能、提示词、会话存档
 全部放进一个独立的**内容仓库**（你自己的 git 仓库），pi-dpi 只负责绑定、加载与同步。
 引擎与内容解耦：引擎升级不动内容，内容迭代不动引擎，同一份内容仓库可以在多台机器、
 多个团队成员之间分发。
@@ -40,7 +40,7 @@ pi install git:github.com/oc101363-creator/pi-dpi
 6. **技能按声明发现**：引擎在 `resources_discover` 时读取**当前 agent** 的
    `agent.json`，只把声明的技能（仓库根 `skills/` 注册表条目）返回给 pi——
    未声明的技能不进会话，这是 dpi 的技能隔离机制。
-7. **立即生效**：自动 `/reload`，agent 卡片、技能、提示词、记忆即刻可用。
+7. **立即生效**：自动 `/reload`，agent 卡片、技能、提示词即刻可用。
 
 ### 远端类型矩阵
 
@@ -88,7 +88,7 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 
 ## 内容仓库结构约定
 
-内容仓库就是一个普通 git 仓库（**务必保持 Private**——记忆与会话都在里面）：
+内容仓库就是一个普通 git 仓库（**务必保持 Private**——会话存档都在里面）：
 
 ```
 <内容仓库>/
@@ -103,7 +103,6 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 │                           #   不直接属于任何 agent，由 agent.json 按名组合
 ├── machines/               # 机器层配置：<hostname>.json 覆写白名单字段
 │                           #   （proxy、recordSessions），随仓库同步，新机器自动获配
-├── memory/<agent>/*.md     # 长期记忆，按 agent 隔离，随仓库版本化
 ├── sessions/<agent>/       # 会话存档按 agent 归档（_legacy/ 为旧平铺档迁移区）
 ├── docs/plans|specs/       # 工作流文档：大改先 spec（设计）后 plan（执行计划）
 └── themes/                 # 可选，pi 主题
@@ -149,6 +148,6 @@ agent 在各自的 `agent.json` 里声明。日常增删技能、调整组合不
 
 ## ⚠️ 隐私提醒
 
-- 内容仓库必须保持 **Private**。记忆与会话存档都在仓库里，仓库公开等于公开你的
-  偏好、项目事实与聊天记录。
+- 内容仓库必须保持 **Private**。会话存档都在仓库里，仓库公开等于公开你的
+  聊天记录。
 - token 仅以 0600 权限存于本机 `~/.pi/agent/dpi/token`，绝不写进 remote URL 或任何配置。

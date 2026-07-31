@@ -77,10 +77,6 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     existsSync(join(repo, "extensions", `${name}.ts`)),
   );
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
-  const memDir = join(repo, "memory", agent);
-  const memCount = existsSync(memDir)
-    ? readdirSync(memDir).filter((f) => f.endsWith(".md")).length
-    : 0;
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
     const section = (name: string, body: string) =>
@@ -89,7 +85,6 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
-    sections.push(section("Memory", `${memCount} 个文件`));
     return new Text(sections.join("\n\n"), 0, 0);
   });
   ctx.ui.setStatus("agent-world", `agent: ${agent}`);
