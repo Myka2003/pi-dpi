@@ -34,6 +34,7 @@ import {
 import { basename, join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { gitIn } from "../src/git.ts";
+import { writeSaveState } from "../src/save-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 /**
@@ -133,19 +134,29 @@ async function commitArchive(repo: string): Promise<void> {
 
 export default function (pi: ExtensionAPI) {
   // 会话结束时：先清理坏消息，再把干净版 JSONL 复制进仓库 sessions/<agent>/ 目录
-  // 并立即 commit（持久化不依赖扩展顺序）；push 由 dpi-sync 统一处理
+  // 并立即 commit（持久化不依赖扩展顺序）；push 由 dpi-sync 统一处理。
+  // 归档结果写入 save-state（面板 Sync 指示），过程给用户可见的保存提示。
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
       const file = ctx.sessionManager.getSessionFile();
       if (file) repairSessionFile(file); // 自愈：坏消息不进归档、不毒害下次加载
-      if (!loadConfig().recordSessions) return;
+      const cfg = loadConfig();
+      if (!cfg.recordSessions) return;
       const root = sessionsRoot();
       if (!root) return;
       if (!file || !existsSync(file)) return;
+      ctx.ui.notify("正在保存会话…", "info");
       const dir = join(root, archiveAgentName());
       mkdirSync(dir, { recursive: true });
       copyFileSync(file, join(dir, basename(file)));
-      await commitArchive(loadConfig().repoPath); // git 操作在仓库根执行
+      await commitArchive(cfg.repoPath); // git 操作在仓库根执行
+      writeSaveState({
+        lastArchive: {
+          time: new Date().toISOString(),
+          session: basename(file),
+          result: "committed",
+        },
+      });
     } catch {
       // 存档失败不阻断退出
     }

@@ -17,6 +17,12 @@ import { hasToken, loadConfig, remoteNeedsToken, tokenPath } from "../src/config
 import { GIT_TIMEOUT, gitIn } from "../src/git.ts";
 import type { GitOptions } from "../src/git.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
+import {
+  formatSyncStatus,
+  pendingCommits,
+  readSaveState,
+  writeSaveState,
+} from "../src/save-state.ts";
 
 interface SyncTarget {
   repoPath: string;
@@ -61,16 +67,31 @@ async function autoSync(onStartup: boolean): Promise<void> {
   }
   try {
     await gitIn(t.repoPath, ["push"], t.opts);
-  } catch {
-    // 推送失败静默
+    writeSaveState({ lastPush: { time: new Date().toISOString(), result: "ok" } });
+  } catch (e) {
+    writeSaveState({
+      lastPush: {
+        time: new Date().toISOString(),
+        result: "failed",
+        error: e instanceof Error ? e.message : String(e),
+      },
+    });
   }
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async (event) => {
+  pi.on("session_start", async (event, ctx) => {
     if (event.reason !== "startup") return;
     try {
       await autoSync(true);
+      // 启动后提醒未推送的提交（断网/冲突遗留），用户能确认保存状态
+      const cfg = loadConfig();
+      if (cfg.repoUrl) {
+        const pending = await pendingCommits(cfg);
+        if (pending !== null && pending > 0) {
+          ctx.ui.notify(`⚠ ${pending} 个提交未推送（内容仓库），退出时自动重试`, "warning");
+        }
+      }
     } catch {
       // 绝不阻塞启动
     }
@@ -104,6 +125,27 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         ctx.ui.notify(`同步失败: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
+    },
+  });
+
+  // /dpi-save-status：查看保存状态（最近归档/推送/未推送数）
+  registerDpiCommand(pi, "dpi-save-status", {
+    description: "查看保存状态：最近归档/推送、未推送提交数",
+    handler: async (_args, ctx) => {
+      const cfg = loadConfig();
+      const state = readSaveState();
+      const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
+      const lines = [
+        formatSyncStatus(state, pending),
+        state.lastArchive
+          ? `最近归档: ${state.lastArchive.time.slice(0, 19).replace("T", " ")} ${state.lastArchive.session}（${state.lastArchive.result === "committed" ? "已提交" : "仅复制"}）`
+          : "最近归档: 无记录",
+        state.lastPush
+          ? `最近推送: ${state.lastPush.time.slice(0, 19).replace("T", " ")} ${state.lastPush.result === "ok" ? "成功" : `失败${state.lastPush.error ? `（${state.lastPush.error}）` : ""}`}`
+          : "最近推送: 无记录",
+        pending !== null ? `未推送提交: ${pending}` : "未推送提交: 未知（git 不可用）",
+      ];
+      ctx.ui.notify(lines.join("\n"), "info");
     },
   });
 }

@@ -23,6 +23,12 @@ import {
 } from "../src/config.ts";
 import { safeAgentName } from "../src/common.ts";
 import { showVimListPicker } from "../src/vim-list-picker.ts";
+import {
+  formatSyncStatus,
+  pendingCommits,
+  readSaveState,
+  syncStatusShort,
+} from "../src/save-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
@@ -63,7 +69,7 @@ function agentTitle(repo: string, agent: string): string {
 }
 
 // 渲染当前 agent 卡片：完全复刻 pi 原生资源面板（[节标题] mdHeading 色 + dim 色缩进内容 + 节间空行）
-function showAgentCard(ctx: ExtensionContext, agent: string): void {
+async function showAgentCard(ctx: ExtensionContext, agent: string): Promise<void> {
   if (!ctx.hasUI) return;
   const repo = repoPath();
   if (!repo) return;
@@ -78,6 +84,18 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     existsSync(join(repo, "extensions", `${name}.ts`)),
   );
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
+  // 保存状态（异步：需要 git 查未推送提交）；失败静默显示未知
+  let syncText = "…";
+  let syncShort = "sync: ?";
+  try {
+    const cfg = loadConfig();
+    const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
+    const state = readSaveState();
+    syncText = formatSyncStatus(state, pending);
+    syncShort = syncStatusShort(state, pending);
+  } catch {
+    // 状态不可用不阻断卡片
+  }
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
     const section = (name: string, body: string) =>
@@ -86,9 +104,11 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
+    sections.push(section("Sync", syncText));
     return new Text(sections.join("\n\n"), 0, 0);
   });
   ctx.ui.setStatus("agent-world", `agent: ${agent}`);
+  ctx.ui.setStatus("dpi-sync", syncShort);
 }
 
 export default function (pi: ExtensionAPI) {
