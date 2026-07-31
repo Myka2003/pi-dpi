@@ -10,7 +10,10 @@
   "files": [
     "extensions",
     "src",
-    "README.md"
+    "templates",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "pi": {
     "extensions": [
@@ -23,5 +26,13 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.6",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
