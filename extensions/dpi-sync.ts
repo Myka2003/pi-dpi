@@ -138,9 +138,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   // 远端声明监听：每 3 秒 fetch 检测 agent.json 远端/本地版本，变了立即 pull --rebase
-  // （autostash 保护）——本地文件变化由 DeclarationWatch 捕获，轮结束自动 reload。
-  // 这样远端改动（GitHub 编辑/其他机器推送）在数秒内同步到本会话，无需手动 reload。
+  // （autostash 保护）。注意：pull 后必须主动触发 /reload——DeclarationWatch/
+  // agent_settled 只在用户对话轮运行，用户看着面板不发消息时永远不会触发。
+  // pi.sendUserMessage("/reload", followUp) 在空闲时立即执行、输入中则排队，安全。
   let watchTimer: ReturnType<typeof setInterval> | null = null;
+  let reloadPending = false; // 已排队的 reload 未执行前不再重复排队
   pi.on("session_start", async () => {
     if (watchTimer) clearInterval(watchTimer);
     const cfg = loadConfig();
@@ -153,16 +155,27 @@ export default function (pi: ExtensionAPI) {
           await gitIn(t.repoPath, ["pull", "--rebase", "--autostash"], t.opts);
         } catch {
           // 冲突/失败静默（rebase 中断已由 session_start 告警；下轮重试）
+          return;
+        }
+        if (!reloadPending) {
+          reloadPending = true;
+          try {
+            pi.sendUserMessage("/reload", { deliverAs: "followUp" });
+          } catch {
+            reloadPending = false;
+          }
         }
       }
     }, 3000);
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (event) => {
     if (watchTimer) {
       clearInterval(watchTimer);
       watchTimer = null;
     }
+    // reload 原因关闭：排队的 reload 已开始执行，新会话会重建定时器
+    if (event.reason === "reload") reloadPending = false;
   });
 
   pi.on("session_shutdown", async () => {
