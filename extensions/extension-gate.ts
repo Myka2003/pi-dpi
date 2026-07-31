@@ -18,12 +18,15 @@
  * agent.json 被外部编辑/同步（/sync 拉取）后，过滤器也能在下一次重载后收敛。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadConfig, syncExtensionFilter, syncStrictSkills } from "../src/config.ts";
+import { ensureRepoDeps, loadConfig, syncExtensionFilter, syncStrictSkills } from "../src/config.ts";
 
 export default function (pi: ExtensionAPI) {
-  // 启动自愈：扩展过滤器对齐 agent 声明 + 技能严格模式（均幂等，无改动不写盘）
+  // 启动自愈：内容仓库依赖安装 + 扩展过滤器对齐 agent 声明 + 技能严格模式
+  // （均幂等，无改动不写盘；依赖安装阻塞式保证本次会话扩展可用）
   pi.on("session_start", async () => {
-    syncExtensionFilter(loadConfig());
+    const cfg = loadConfig();
+    if (cfg.repoUrl) ensureRepoDeps(cfg.repoPath);
+    syncExtensionFilter(cfg);
     syncStrictSkills();
   });
 }

@@ -16,6 +16,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
@@ -409,6 +410,29 @@ export function syncStrictSkills(): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * 确保内容仓库依赖已安装：package.json 声明了 dependencies 且 node_modules 缺失时
+ * 同步执行 npm install --omit=peer（核心包由 pi 别名提供，无需安装；跳过 peer
+ * 避免把 pi 全套装进来）。阻塞式等待保证本次会话的扩展加载可用；失败静默。
+ */
+export function ensureRepoDeps(repoPath: string): void {
+  try {
+    const pkg = join(repoPath, "package.json");
+    if (!existsSync(pkg)) return;
+    const raw = JSON.parse(readFileSync(pkg, "utf-8")) as Record<string, unknown>;
+    const deps = raw.dependencies as Record<string, string> | undefined;
+    if (!deps || Object.keys(deps).length === 0) return;
+    if (existsSync(join(repoPath, "node_modules"))) return;
+    execFileSync("npm", ["install", "--omit=peer"], {
+      cwd: repoPath,
+      stdio: "ignore",
+      timeout: 120000,
+    });
+  } catch {
+    // 安装失败静默：扩展可能暂时不可用，下次会话重试
   }
 }
 
