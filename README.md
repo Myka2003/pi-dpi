@@ -9,12 +9,13 @@ engine, and the same content repo can be distributed across machines and team me
 
 > 中文: [README.zh.md](README.zh.md) | English: this file
 
+![Uploading image.png…]()
+
 ## Install
 
 ```bash
 pi install git:github.com/oc101363-creator/pi-dpi
 ```
-![Uploading image.png…]()
 
 ## Getting Started: `/dpi-agent-login`
 
