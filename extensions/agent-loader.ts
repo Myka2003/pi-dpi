@@ -28,6 +28,7 @@ import {
 import { safeAgentName } from "../src/common.ts";
 import { showVimListPicker } from "../src/vim-list-picker.ts";
 import {
+  formatSyncDetail,
   formatSyncStatus,
   pendingCommits,
   readSaveState,
@@ -75,7 +76,7 @@ function agentTitle(repo: string, agent: string): string {
 
 // Sync 段缓存：pendingCommits 是 git 子进程（慢），只在会话生命周期点刷新；
 // 面板每轮/定时重绘时用缓存，避免高频 git 调用
-let syncCache = { text: "… 尚无保存记录", short: "sync: ?" };
+let syncCache = { text: "… 尚无保存记录", short: "sync: ?", detail: "" };
 
 /** 刷新 Sync 缓存（异步，调用方不阻塞等待） */
 async function refreshSyncCache(): Promise<void> {
@@ -86,6 +87,7 @@ async function refreshSyncCache(): Promise<void> {
     syncCache = {
       text: formatSyncStatus(state, pending),
       short: syncStatusShort(state, pending),
+      detail: formatSyncDetail(state),
     };
   } catch {
     // 状态不可用保留旧缓存
@@ -120,7 +122,7 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
-    sections.push(section("Sync", `${syncCache.text}\n  ${remoteSyncLine()}`));
+    sections.push(section("Sync", `${syncCache.text}\n  ${remoteSyncLine()}${syncCache.detail ? `\n  ${syncCache.detail}` : ""}`));
     return new Text(sections.join("\n\n"), 0, 0);
   });
   ctx.ui.setStatus("agent-world", `agent: ${agent}`);

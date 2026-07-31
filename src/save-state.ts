@@ -127,9 +127,23 @@ export const remoteSyncState: RemoteSyncState = {
 export function remoteSyncLine(): string {
   const s = remoteSyncState;
   if (s.pulling) return "⟳ 正在同步远端…";
-  if (s.lastCheck === 0) return "远端：未检测";
+  if (s.lastCheck === 0) return "远端：未检测（同步定时器未启动，请 /reload）";
   const ago = relTime(s.lastCheck);
   if (s.lastResult === "failed") return `✗ 远端检测失败（${ago}）`;
   if (s.lastPull >= s.lastCheck - 1) return `已拉取远端变更（${ago}）`;
   return `远端一致（${ago}）`;
+}
+
+/** 保存详情（面板 Sync 段第二行）：最近归档/推送的具体信息 */
+export function formatSyncDetail(state: SaveState): string {
+  const parts: string[] = [];
+  if (state.lastArchive) {
+    const t = state.lastArchive.time.slice(5, 16).replace("T", " ");
+    parts.push(`归档 ${t} ${state.lastArchive.session.slice(0, 24)}${state.lastArchive.result === "committed" ? " ✓" : ""}`);
+  }
+  if (state.lastPush) {
+    const t = state.lastPush.time.slice(5, 16).replace("T", " ");
+    parts.push(`推送 ${t} ${state.lastPush.result === "ok" ? "✓" : `✗ ${state.lastPush.error ?? ""}`}`);
+  }
+  return parts.join("\n  ");
 }

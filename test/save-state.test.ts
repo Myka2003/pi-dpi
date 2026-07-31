@@ -32,7 +32,7 @@ describe("formatSyncStatus 状态文案", () => {
 describe("remoteSyncLine 远端同步状态", () => {
   it("未检测时显示占位", () => {
     const { remoteSyncLine } = require("../src/save-state.ts") as typeof import("../src/save-state.ts");
-    expect(remoteSyncLine()).toBe("远端：未检测");
+    expect(remoteSyncLine()).toContain("远端：未检测");
   });
   it("pull 后显示已拉取", () => {
     const { remoteSyncState, remoteSyncLine } = require("../src/save-state.ts") as typeof import("../src/save-state.ts");
