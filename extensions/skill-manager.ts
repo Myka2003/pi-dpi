@@ -58,7 +58,6 @@ function scanRegistrySkills(repo: string): { name: string; description: string }
 
 const config: RegistryManagerConfig = {
   kindLabel: "技能",
-  registryLabel: "注册表技能",
   declaredField: "skills",
   scanRegistry: scanRegistrySkills,
   readDeclared: (repo, agent) => readAgentManifest(repo, agent).skills,

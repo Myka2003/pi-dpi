@@ -31,7 +31,6 @@ function scanRegistryExtensions(repo: string): { name: string; description: stri
 
 const config: RegistryManagerConfig = {
   kindLabel: "扩展",
-  registryLabel: "注册表扩展",
   declaredField: "extensions",
   scanRegistry: scanRegistryExtensions,
   readDeclared: (repo, agent) => readAgentManifest(repo, agent).extensions,
