@@ -9,6 +9,7 @@ export default defineConfig({
       "@earendil-works/pi-coding-agent": fileURLToPath(
         new URL("./test/stub-types.ts", import.meta.url),
       ),
+      "@earendil-works/pi-tui": fileURLToPath(new URL("./test/stub-types.ts", import.meta.url)),
       typebox: fileURLToPath(new URL("./test/stub-types.ts", import.meta.url)),
     },
   },
