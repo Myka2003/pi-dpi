@@ -53,12 +53,16 @@ interface ArchivedSession {
   path: string; // 存档文件绝对路径
   fileName: string; // basename（恢复时作目标文件名）
   name: string; // 最新 session_info.name；无则 ""
-  firstUser: string; // 首条 user 消息文本（已压缩空白）
+  firstUser: string; // 首条非 meta user 消息文本（已清洗压缩）
   messages: number; // user+assistant 消息数
   sortKey: number; // 排序键：最后 user/assistant 消息时间戳（ms），回退 header.timestamp
   dayLabel: string; // header.timestamp 的 YYYY-MM-DD（标题/通知的日期回退）
+  cwdLabel: string; // header.cwd 最后一段（标题格式用），空串回退 fileName
   partial: boolean; // >2MB 只解析了头部：按文件名展示、不计数
 }
+
+// 列表每页条数（select 无滚动，分页避免撑爆终端）
+const PAGE_SIZE = 25;
 
 /** 消息 content 取首段文本：字符串直取，数组找第一个 {type:"text",text} */
 function extractText(content: unknown): string {
@@ -70,6 +74,20 @@ function extractText(content: unknown): string {
     }
   }
   return "";
+}
+
+/**
+ * 首条消息清洗（固定格式标题用）：去掉 [Image #N] 图片占位、markdown 代码围栏、
+ * 长 URL、local-command 标记，压缩空白。返回清洗后文本或空串。
+ */
+function cleanUserText(raw: string): string {
+  return raw
+    .replace(/\[Image #[0-9]+\]/g, "") // 图片占位
+    .replace(/```[\s\S]*?```/g, "") // 代码块
+    .replace(/<[^>]{2,200}>/g, " ") // 尖括号标记（local-command-caveat/skill 标签等）
+    .replace(/https?:\/\/\S+/g, "") // 长 URL
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** 行时间戳（ms）：entry.timestamp（ISO 字符串）优先，回退 message.timestamp（epoch ms） */
@@ -114,6 +132,7 @@ function parseArchived(agent: string, path: string): ArchivedSession | null {
       messages: 0,
       sortKey: 0,
       dayLabel: "",
+      cwdLabel: "",
       partial,
     };
     let parsedAny = false; // 是否解析出任何有效行（全坏行 = 坏文件，整体跳过）
@@ -133,6 +152,10 @@ function parseArchived(agent: string, path: string): ArchivedSession | null {
           if (!Number.isNaN(t0) && entry.sortKey === 0) entry.sortKey = t0; // header 兜底
           if (!entry.dayLabel) entry.dayLabel = rec.timestamp.slice(0, 10);
         }
+        if (typeof rec.cwd === "string" && rec.cwd !== "" && !entry.cwdLabel) {
+          const parts = rec.cwd.split("/").filter(Boolean);
+          entry.cwdLabel = parts.length > 0 ? parts[parts.length - 1] : rec.cwd;
+        }
         continue;
       }
       if (rec.type === "session_info") {
@@ -149,8 +172,9 @@ function parseArchived(agent: string, path: string): ArchivedSession | null {
       if (role !== "user" && role !== "assistant") continue;
       parsedAny = true;
       entry.messages++;
-      if (role === "user" && !entry.firstUser) {
-        entry.firstUser = extractText(msg.content).replace(/\s+/g, " ").trim();
+      // 首条真实用户消息（跳过 isMeta 系统注入，如 local-command-caveat）
+      if (role === "user" && !entry.firstUser && !rec.isMeta) {
+        entry.firstUser = cleanUserText(extractText(msg.content));
       }
       const ts = lineTimestamp(rec, msg);
       if (ts > 0) entry.sortKey = ts; // 流式覆盖：取最后一条
@@ -213,11 +237,16 @@ function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-/** 列表条目标题：name ?? 首条消息（截断 ~36 字符）；partial 按文件名展示 */
+/** 列表条目标题：name ?? 固定格式「MM-DD 目录 · 首条消息」；partial 按文件名展示 */
 function entryTitle(s: ArchivedSession): string {
   if (s.partial) return s.fileName;
-  const t = (s.name || s.firstUser).replace(/\s+/g, " ").trim();
-  return truncate(t || s.fileName, 36);
+  const t = s.name.replace(/\s+/g, " ").trim();
+  if (t) return truncate(t, 40);
+  const day = s.dayLabel.slice(5); // YYYY-MM-DD → MM-DD
+  const ctx = s.cwdLabel || "";
+  const head = truncate(s.firstUser, 24);
+  const parts = [day, ctx, head ? `· ${head}` : ""].filter(Boolean);
+  return parts.join(" ") || truncate(s.fileName, 40);
 }
 
 /** 子菜单标题/通知用的短名：name ?? 日期 */
@@ -329,27 +358,51 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // 主循环：按排序键倒序；「◑ 筛选」在 全部/当前 agent 间切换重绘，直到完成/取消
+      // 主循环：按排序键倒序分页（select 无滚动，PAGE_SIZE 每页）；
+      // 「◑ 筛选」在 全部/当前 agent 间切换重绘；分页项翻页。直到完成/取消
       let onlyCurrent = false;
+      let pageOffset = 0;
       for (;;) {
         const shown = archived
           .filter((s) => !onlyCurrent || s.agent === agent)
           .sort((a, b) => b.sortKey - a.sortKey);
-        const options = shown.map((s) => {
+        const total = shown.length;
+        const page = shown.slice(pageOffset, pageOffset + PAGE_SIZE);
+        const options = page.map((s) => {
           const count = s.partial ? "" : ` · ${s.messages}条`;
           return `[${s.agent}] ${entryTitle(s)}${count} · ${relTime(s.sortKey)}`;
         });
-        const filterItem = `◑ 筛选：${onlyCurrent ? agent : "全部"}`;
+        // 分页项（仅当超一页时）：更早/较新（翻页时把 pageOffset 当作已知项计数）
+        const olderItem =
+          pageOffset + PAGE_SIZE < total
+            ? `▼ 更早的存档（还有 ${total - pageOffset - PAGE_SIZE} 条）`
+            : undefined;
+        const newerItem = pageOffset > 0 ? "▲ 较新的存档" : undefined;
+        if (olderItem) options.push(olderItem);
+        if (newerItem) options.push(newerItem);
+        const filterItem = `◑ 筛选：${onlyCurrent ? agent : "全部"}（${total} 条）`;
         options.push(filterItem, DONE_ITEM);
-        const picked = await ctx.ui.select("会话存档", options);
+        const picked = await ctx.ui.select(
+          total > PAGE_SIZE ? `会话存档（${pageOffset + 1}-${pageOffset + page.length}/${total}）` : "会话存档",
+          options,
+        );
         if (picked === undefined || picked === DONE_ITEM) break;
-        if (picked === filterItem) {
-          onlyCurrent = !onlyCurrent;
+        if (picked === olderItem) {
+          pageOffset += PAGE_SIZE;
           continue;
         }
-        // 选项字符串与 shown 顺序一一对应，按下标取回存档
+        if (picked === newerItem) {
+          pageOffset = Math.max(0, pageOffset - PAGE_SIZE);
+          continue;
+        }
+        if (picked === filterItem) {
+          onlyCurrent = !onlyCurrent;
+          pageOffset = 0; // 切换筛选回到第一页
+          continue;
+        }
+        // 选项字符串与 page 顺序一一对应，按下标取回存档
         const idx = options.indexOf(picked);
-        const target = idx >= 0 && idx < shown.length ? shown[idx] : undefined;
+        const target = idx >= 0 && idx < page.length ? page[idx] : undefined;
         if (!target) continue;
 
         // 子菜单：恢复 / 删除 / 返回
@@ -366,6 +419,7 @@ export default function (pi: ExtensionAPI) {
           if (await deleteArchived(ctx, target)) {
             archived = scanArchived(repo); // 删除后重扫刷新列表
             if (archived.length === 0) break;
+            pageOffset = Math.min(pageOffset, Math.max(0, archived.length - PAGE_SIZE));
           }
           continue;
         }
