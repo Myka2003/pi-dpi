@@ -1,11 +1,15 @@
 /**
  * agent-loader：当前 agent 解析（移植自旧内容仓库 extensions/agent-loader.ts）。
  *
- * - session_start：渲染当前 agent 的能力卡片（复刻 pi 原生面板样式）+ 底栏状态
- * - before_agent_start：把 agents/<当前agent>/SYSTEM.md 链式注入系统提示词
  * - resources_discover：按当前 agent 的 agent.json 声明，从仓库根 skills/ 注册表
  *   返回该 agent 的技能目录（技能隔离的裁决点：未声明的技能不进会话）+
  *   agents/<agent>/prompts
+ * - before_agent_start：把 agents/<当前agent>/SYSTEM.md 链式注入系统提示词
+ * - 面板实时化：3 秒定时器无条件重绘 agent 卡片（技能声明 + Sync 远端状态）——
+ *   面板永远反映最新声明与同步结果，不依赖 reload。
+ *   注：技能真正注入（resources_discover）仍需启动/reload（pi 平台限制——
+ *   扩展无法程序化触发 reload，sendUserMessage 跳过命令处理），但面板
+ *   （用户看到的技能列表）是实时的。
  * - /agent [name]：查看/交互或直接切换当前 agent（写入 dpi 配置 + ctx.reload() 让新技能生效）
  *
  * 内容仓库路径全部来自 dpi 配置（config.repoPath）；未绑定时所有 hook 静默 no-op。
@@ -27,13 +31,9 @@ import {
   formatSyncStatus,
   pendingCommits,
   readSaveState,
+  remoteSyncLine,
   syncStatusShort,
 } from "../src/save-state.ts";
-import { DeclarationWatch } from "../src/declaration-watch.ts";
-
-// 声明文件变更检测：会话中 agent.json 被外部改动时，在轮结束空闲自动 reload
-const declarationWatch = new DeclarationWatch();
-let declarationDirty = false;
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
@@ -73,8 +73,27 @@ function agentTitle(repo: string, agent: string): string {
   }
 }
 
+// Sync 段缓存：pendingCommits 是 git 子进程（慢），只在会话生命周期点刷新；
+// 面板每轮/定时重绘时用缓存，避免高频 git 调用
+let syncCache = { text: "… 尚无保存记录", short: "sync: ?" };
+
+/** 刷新 Sync 缓存（异步，调用方不阻塞等待） */
+async function refreshSyncCache(): Promise<void> {
+  try {
+    const cfg = loadConfig();
+    const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
+    const state = readSaveState();
+    syncCache = {
+      text: formatSyncStatus(state, pending),
+      short: syncStatusShort(state, pending),
+    };
+  } catch {
+    // 状态不可用保留旧缓存
+  }
+}
+
 // 渲染当前 agent 卡片：完全复刻 pi 原生资源面板（[节标题] mdHeading 色 + dim 色缩进内容 + 节间空行）
-async function showAgentCard(ctx: ExtensionContext, agent: string): Promise<void> {
+function showAgentCard(ctx: ExtensionContext, agent: string): void {
   if (!ctx.hasUI) return;
   const repo = repoPath();
   if (!repo) return;
@@ -89,18 +108,6 @@ async function showAgentCard(ctx: ExtensionContext, agent: string): Promise<void
     existsSync(join(repo, "extensions", `${name}.ts`)),
   );
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
-  // 保存状态（异步：需要 git 查未推送提交）；失败静默显示未知
-  let syncText = "…";
-  let syncShort = "sync: ?";
-  try {
-    const cfg = loadConfig();
-    const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
-    const state = readSaveState();
-    syncText = formatSyncStatus(state, pending);
-    syncShort = syncStatusShort(state, pending);
-  } catch {
-    // 状态不可用不阻断卡片
-  }
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
     const section = (name: string, body: string) =>
@@ -109,11 +116,11 @@ async function showAgentCard(ctx: ExtensionContext, agent: string): Promise<void
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
-    sections.push(section("Sync", syncText));
+    sections.push(section("Sync", `${syncCache.text}\n  ${remoteSyncLine()}`));
     return new Text(sections.join("\n\n"), 0, 0);
   });
   ctx.ui.setStatus("agent-world", `agent: ${agent}`);
-  ctx.ui.setStatus("dpi-sync", syncShort);
+  ctx.ui.setStatus("dpi-sync", syncCache.short);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -122,36 +129,48 @@ export default function (pi: ExtensionAPI) {
   pi.on("resources_discover", async (event, ctx) => {
     if (event.reason !== "startup" && event.reason !== "reload") return;
     if (!repoPath()) return;
+    void refreshSyncCache(); // 不阻塞渲染
     showAgentCard(ctx, currentAgent());
   });
 
-  // 每轮开始前，把当前 agent 的 SYSTEM.md 链式追加到系统提示词之后
-  pi.on("before_agent_start", async (event) => {
-    // 会话中检测 agent.json 变化：标记后由 agent_settled 空闲时自动 reload
-    const repo0 = repoPath();
-    if (repo0 && !declarationDirty && declarationWatch.changed(repo0, currentAgent())) {
-      declarationDirty = true;
+  // 面板实时化：3 秒定时器重绘卡片（技能声明 + Sync 远端状态永远最新），
+  // 不依赖用户输入、不依赖 reload。ctx 生命周期与会话一致，存模块级引用。
+  let watchTimer: ReturnType<typeof setInterval> | null = null;
+  let sessionCtx: ExtensionContext | null = null;
+  pi.on("session_start", async (_event, ctx) => {
+    if (watchTimer) clearInterval(watchTimer);
+    sessionCtx = ctx;
+    if (!repoPath()) return;
+    void refreshSyncCache();
+    showAgentCard(ctx, currentAgent());
+    watchTimer = setInterval(() => {
+      const agent = currentAgent();
+      const repo = repoPath();
+      const c = sessionCtx;
+      if (!repo || !c) return;
+      // 无条件重绘：声明变化与远端同步状态都实时反映（差量渲染，成本低）
+      showAgentCard(c, agent);
+    }, 3000);
+  });
+  pi.on("session_shutdown", () => {
+    if (watchTimer) {
+      clearInterval(watchTimer);
+      watchTimer = null;
     }
+    sessionCtx = null;
+  });
+
+  // 每轮开始前：注入 SYSTEM.md + 顺手刷新面板（保证轮开始时正确）
+  pi.on("before_agent_start", async (event, ctx) => {
     const repo = repoPath();
     if (!repo) return;
     const agent = currentAgent();
+    showAgentCard(ctx, agent);
     const file = join(repo, "agents", agent, "SYSTEM.md");
     if (!existsSync(file)) return;
     const content = readFileSync(file, "utf-8").trim();
     if (!content) return;
     return { systemPrompt: `${event.systemPrompt}\n\n${content}` };
-  });
-
-  // 轮结束空闲：声明文件有变化则自动 /reload 让新技能/扩展生效（不打断当前轮）
-  pi.on("agent_settled", (_event, ctx) => {
-    if (!declarationDirty) return;
-    declarationDirty = false;
-    ctx.ui.notify("agent.json 已变更，自动重载生效…", "info");
-    try {
-      pi.sendUserMessage("/reload", { deliverAs: "followUp" });
-    } catch {
-      // reload 排队失败：下次检测再试
-    }
   });
 
   // 技能发现的裁决点：只返回当前 agent 在 agent.json 里声明的技能

@@ -100,3 +100,36 @@ export function syncStatusShort(state: SaveState, pending: number | null): strin
   if (state.lastPush?.result === "ok" && pending === 0) return "sync: ✓";
   return "sync: ?";
 }
+
+// ---------- 远端同步实时状态（进程内共享） ----------
+// dpi-sync 的 3 秒监听定时器每轮写入，agent-loader 面板读——
+// 让用户能在 Sync 栏直接看到「远端检测/拉取」的具体结果。
+
+export interface RemoteSyncState {
+  /** 最近一次远端检测（fetch）时间戳 ms */
+  lastCheck: number;
+  /** 最近一次检测结果 */
+  lastResult: "" | "ok" | "failed";
+  /** 最近一次成功拉取（pull）时间戳 ms；0 = 从未 */
+  lastPull: number;
+  /** 拉取进行中（面板显示 ⟳） */
+  pulling: boolean;
+}
+
+export const remoteSyncState: RemoteSyncState = {
+  lastCheck: 0,
+  lastResult: "",
+  lastPull: 0,
+  pulling: false,
+};
+
+/** 远端同步状态的单行展示（面板 Sync 段用） */
+export function remoteSyncLine(): string {
+  const s = remoteSyncState;
+  if (s.pulling) return "⟳ 正在同步远端…";
+  if (s.lastCheck === 0) return "远端：未检测";
+  const ago = relTime(s.lastCheck);
+  if (s.lastResult === "failed") return `✗ 远端检测失败（${ago}）`;
+  if (s.lastPull >= s.lastCheck - 1) return `已拉取远端变更（${ago}）`;
+  return `远端一致（${ago}）`;
+}

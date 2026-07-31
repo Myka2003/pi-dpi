@@ -28,3 +28,23 @@ describe("formatSyncStatus 状态文案", () => {
     expect(formatSyncStatus(base, null)).toContain("尚无保存记录");
   });
 });
+
+describe("remoteSyncLine 远端同步状态", () => {
+  it("未检测时显示占位", () => {
+    const { remoteSyncLine } = require("../src/save-state.ts") as typeof import("../src/save-state.ts");
+    expect(remoteSyncLine()).toBe("远端：未检测");
+  });
+  it("pull 后显示已拉取", () => {
+    const { remoteSyncState, remoteSyncLine } = require("../src/save-state.ts") as typeof import("../src/save-state.ts");
+    remoteSyncState.lastCheck = Date.now();
+    remoteSyncState.lastResult = "ok";
+    remoteSyncState.lastPull = Date.now();
+    expect(remoteSyncLine()).toContain("已拉取远端变更");
+  });
+  it("失败时显示失败", () => {
+    const { remoteSyncState, remoteSyncLine } = require("../src/save-state.ts") as typeof import("../src/save-state.ts");
+    remoteSyncState.lastCheck = Date.now();
+    remoteSyncState.lastResult = "failed";
+    expect(remoteSyncLine()).toContain("远端检测失败");
+  });
+});

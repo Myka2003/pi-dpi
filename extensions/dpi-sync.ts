@@ -20,6 +20,7 @@ import {
   formatSyncStatus,
   pendingCommits,
   readSaveState,
+  remoteSyncState,
   writeSaveState,
 } from "../src/save-state.ts";
 
@@ -142,7 +143,6 @@ export default function (pi: ExtensionAPI) {
   // agent_settled 只在用户对话轮运行，用户看着面板不发消息时永远不会触发。
   // pi.sendUserMessage("/reload", followUp) 在空闲时立即执行、输入中则排队，安全。
   let watchTimer: ReturnType<typeof setInterval> | null = null;
-  let reloadPending = false; // 已排队的 reload 未执行前不再重复排队
   pi.on("session_start", async () => {
     if (watchTimer) clearInterval(watchTimer);
     const cfg = loadConfig();
@@ -150,32 +150,36 @@ export default function (pi: ExtensionAPI) {
     const t = target();
     if (!t) return;
     watchTimer = setInterval(async () => {
-      if (await remoteDeclChanged(t, cfg)) {
+      // 每轮先标记检测开始（面板显示 ⟳）
+      remoteSyncState.pulling = true;
+      remoteSyncState.lastCheck = Date.now();
+      let changed = false;
+      try {
+        changed = await remoteDeclChanged(t, cfg);
+        remoteSyncState.lastResult = "ok";
+      } catch {
+        remoteSyncState.lastResult = "failed";
+        remoteSyncState.pulling = false;
+        return;
+      }
+      if (changed) {
         try {
           await gitIn(t.repoPath, ["pull", "--rebase", "--autostash"], t.opts);
+          remoteSyncState.lastPull = Date.now(); // 面板显示「已拉取远端变更」
         } catch {
-          // 冲突/失败静默（rebase 中断已由 session_start 告警；下轮重试）
-          return;
-        }
-        if (!reloadPending) {
-          reloadPending = true;
-          try {
-            pi.sendUserMessage("/reload", { deliverAs: "followUp" });
-          } catch {
-            reloadPending = false;
-          }
+          // 冲突/失败：状态留在 failed（rebase 中断已由 session_start 告警）
+          remoteSyncState.lastResult = "failed";
         }
       }
+      remoteSyncState.pulling = false;
     }, 3000);
   });
 
-  pi.on("session_shutdown", async (event) => {
+  pi.on("session_shutdown", async () => {
     if (watchTimer) {
       clearInterval(watchTimer);
       watchTimer = null;
     }
-    // reload 原因关闭：排队的 reload 已开始执行，新会话会重建定时器
-    if (event.reason === "reload") reloadPending = false;
   });
 
   pi.on("session_shutdown", async () => {
