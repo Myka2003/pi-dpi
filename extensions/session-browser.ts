@@ -132,10 +132,15 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // vim 风格选择器（含分页/过滤/agent 筛选）；选中后走恢复/删除子菜单
+      // vim 风格选择器（c 键切换 agent 筛选）；选中后走恢复/删除子菜单
       let archivedNow = archived;
+      let onlyCurrent = false;
       for (;;) {
-        const picked = await showSessionPicker(ctx, archivedNow, agent);
+        const picked = await showSessionPicker(ctx, archivedNow, agent, onlyCurrent);
+        if (picked === "cycle-filter") {
+          onlyCurrent = !onlyCurrent;
+          continue;
+        }
         if (!picked) return; // 取消/完成
         const action = await ctx.ui.select(`会话 — ${entryLabel(picked)}`, [
           RESTORE_ITEM,
