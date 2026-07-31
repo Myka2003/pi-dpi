@@ -177,17 +177,24 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n${content}` };
   });
 
-  // 技能发现的裁决点：只返回当前 agent 在 agent.json 里声明的技能
-  // （从仓库根 skills/ 注册表逐一校验存在性），外加该 agent 的 prompts 目录。
-  // 未声明的技能不进会话——这是 dpi 技能隔离的实现机制。
+  // 技能发现的裁决点：注册表声明技能（agent.json skills）+
+  // 声明扩展的自带技能（extensions/<name>/skills/——扩展 = 自包含单元，
+  // 声明扩展即声明其技能，不拆散复制进注册表）。未声明的技能不进会话。
   pi.on("resources_discover", async () => {
     const repo = repoPath();
     if (!repo) return {};
     const agent = currentAgent();
     const manifest = readAgentManifest(repo, agent);
-    const skillPaths = manifest.skills
-      .map((name) => join(repo, "skills", name))
-      .filter((dir) => existsSync(join(dir, "SKILL.md")));
+    const skillPaths = [
+      // 注册表声明技能
+      ...manifest.skills
+        .map((name) => join(repo, "skills", name))
+        .filter((dir) => existsSync(join(dir, "SKILL.md"))),
+      // 扩展自带技能（目录型扩展的 skills/ 子目录）
+      ...manifest.extensions
+        .map((name) => join(repo, "extensions", name, "skills"))
+        .filter((dir) => existsSync(dir)),
+    ];
     const promptPaths: string[] = [];
     const promptsDir = join(repo, "agents", agent, "prompts");
     if (existsSync(promptsDir)) promptPaths.push(promptsDir);
