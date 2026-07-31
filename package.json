@@ -16,5 +16,12 @@
     "extensions": [
       "extensions"
     ]
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   }
 }

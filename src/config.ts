@@ -50,14 +50,16 @@ const DEFAULTS: DpiConfig = {
   recordSessions: true,
 };
 
-/** 旧配置迁移：remoteKind 缺失/非法时按 repoUrl 推断远端类型（推断不出回退 github） */
-function inferRemoteKind(repoUrl: string): RemoteKind {
+/** 旧配置迁移：remoteKind 缺失/非法时按 repoUrl 推断远端类型（推断不出回退 github）。导出供测试。
+ * 判定顺序与 parseRepoRemote 对齐：scp-like/ssh 协议先行（git@github.com 属 ssh，
+ * 不能因包含 github.com 被判成 github）。 */
+export function inferRemoteKind(repoUrl: string): RemoteKind {
   const s = repoUrl.trim().toLowerCase();
   if (!s) return "github";
-  if (s.includes("github.com")) return "github";
   if (s.startsWith("git@") || s.startsWith("ssh://") || /^[^/@:]+@[^/:]+:.+/.test(s)) {
     return "ssh";
   }
+  if (s.includes("github.com")) return "github";
   if (s.startsWith("http://") || s.startsWith("https://")) return "http";
   if (s.startsWith("/") || s.startsWith("~") || s.startsWith("file://")) return "local";
   return "github";

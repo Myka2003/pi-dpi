@@ -39,8 +39,9 @@ import { gitIn } from "../src/git.ts";
  * 清理会话文件中的空 assistant 坏消息（content: []），有改动才写回。
  * 返回删除条数；文件缺失/损坏/无坏消息返回 0，绝不抛异常。
  * 判定不看 stopReason：正常 assistant 消息不会有空 content，空即坏消息。
+ * 导出供单元测试。
  */
-function repairSessionFile(file: string): number {
+export function repairSessionFile(file: string): number {
   try {
     if (!file || !existsSync(file)) return 0;
     const lines = readFileSync(file, "utf-8").split("\n");
