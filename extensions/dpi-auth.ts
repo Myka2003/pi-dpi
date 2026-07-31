@@ -47,7 +47,8 @@ const run = promisify(execFile);
 
 // GitHub OAuth App（device flow 公共 client_id，非机密）
 const CLIENT_ID = "Ov23liYebWamOAtuWqe3";
-const SCOPE = "repo";
+// workflow scope：OAuth App 推送 .github/workflows/ 需要（GitHub 安全策略），否则 CI 文件被拒
+const SCOPE = "repo workflow";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
