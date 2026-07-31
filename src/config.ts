@@ -380,6 +380,29 @@ export function syncExtensionFilter(cfg: DpiConfig): boolean {
 }
 
 /**
+ * 严格技能模式：settings.json 顶层 skills 置为 ["!*"]——pi 自动发现的全局/项目
+ * 技能（~/.pi/agent/skills、~/.agents/skills、项目 .agents/skills）全部禁用，
+ * 技能来源只剩两条：内容包（skills: [] 已禁）+ resources_discover（dpi 按
+ * agent.json 声明注入）。即「装了 pi-dpi 的 agent 技能严格由 agent.json 决定」。
+ * 幂等：已为 ["!*"] 不写盘；返回是否有改动。全部容错。
+ */
+export function syncStrictSkills(): boolean {
+  const settingsPath = join(agentDir(), "settings.json");
+  try {
+    const raw = existsSync(settingsPath)
+      ? (JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>)
+      : {};
+    const strict = ["!*"];
+    if (JSON.stringify(raw.skills) === JSON.stringify(strict)) return false;
+    raw.skills = strict;
+    writeFileSync(settingsPath, `${JSON.stringify(raw, null, 2)}\n`, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 把内容仓库的本地路径声明进 pi 的 settings.json packages（声明式加载的关键一步）。
  * 已在列表中（字符串或对象形式）则不重复添加。返回是否有改动。
  * 注意：pi 运行中改写 settings.json 后需要 ctx.reload() 才会生效（调用方负责）。

@@ -66,3 +66,21 @@ describe("scanManifestAgents", () => {
     expect(scanManifestAgents("/nonexistent/repo")).toEqual([]);
   });
 });
+
+describe("syncStrictSkills（settings 写入）", () => {
+  it("通过环境变量指向的 agentDir 写入 skills=[\"!*\"] 且幂等", () => {
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs") as typeof import("node:fs");
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "dpi-test-"));
+    const settings = join(dir, "settings.json");
+    writeFileSync(settings, JSON.stringify({ packages: [] }), "utf-8");
+    process.env.PI_CODING_AGENT_DIR = dir;
+    const { syncStrictSkills } = require("../src/config.ts") as typeof import("../src/config.ts");
+    expect(syncStrictSkills()).toBe(true); // 首次写入
+    expect(syncStrictSkills()).toBe(false); // 幂等
+    const raw = JSON.parse(readFileSync(settings, "utf-8"));
+    expect(raw.skills).toEqual(["!*"]);
+    delete process.env.PI_CODING_AGENT_DIR;
+    rmSync(dir, { recursive: true });
+  });
+});
