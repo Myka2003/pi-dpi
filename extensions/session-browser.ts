@@ -27,10 +27,10 @@ import { showSessionPicker } from "../src/session-picker.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 // 子菜单固定项
-const RESTORE_ITEM = "↩ 恢复到本机并切换";
-const RENAME_ITEM = "✏ 重命名";
-const DELETE_ITEM = "✕ 删除存档（git 可恢复）";
-const BACK_ITEM = "← 返回";
+const RESTORE_ITEM = "↩ Restore to this machine and switch";
+const RENAME_ITEM = "✏ Rename";
+const DELETE_ITEM = "✕ Delete archive (git recoverable)";
+const BACK_ITEM = "← Back";
 
 /** 恢复：复制进本机会话目录（同名不覆盖）→ 改写首行 cwd → switchSession。返回是否已切换 */
 async function restoreArchived(
@@ -44,7 +44,7 @@ async function restoreArchived(
     dir = "";
   }
   if (!dir) {
-    ctx.ui.notify("恢复失败：拿不到本机会话目录，请手动复制存档后用 /resume", "error");
+    ctx.ui.notify("Restore failed: cannot get local session dir, copy manually and /resume", "error");
     return false;
   }
   const dest = join(dir, s.fileName);
@@ -70,19 +70,19 @@ async function restoreArchived(
       writeFileSync(dest, out, "utf-8");
     } else {
       // 本机已有同名文件：不覆盖，直接切换（提示避免误以为恢复了远端版本）
-      ctx.ui.notify(`本机已存在同名会话 ${s.fileName}，将直接切换（不是远端版本）`, "warning");
+      ctx.ui.notify(`Local session ${s.fileName} already exists, switching to it (not the archived copy)`, "warning");
     }
   } catch (e) {
-    ctx.ui.notify(`复制存档失败：${errMsg(e)}`, "error");
+    ctx.ui.notify(`Copy failed: ${errMsg(e)}`, "error");
     return false;
   }
   try {
     await ctx.switchSession(dest);
   } catch {
-    ctx.ui.notify(`已复制到本机会话目录，请用 /resume 恢复（${entryLabel(s)}）`, "info");
+    ctx.ui.notify(`Copied to local sessions, use /resume (${entryLabel(s)})`, "info");
     return false;
   }
-  ctx.ui.notify(`已恢复：${entryLabel(s)}`, "info");
+  ctx.ui.notify(`Restored: ${entryLabel(s)}`, "info");
   return true;
 }
 
@@ -91,15 +91,15 @@ async function deleteArchived(
   ctx: ExtensionCommandContext,
   s: ArchivedSession,
 ): Promise<boolean> {
-  const ok = await ctx.ui.confirm("删除会话存档", "删除该会话存档（git 可恢复）。确认？");
+  const ok = await ctx.ui.confirm("Delete session archive", "Delete this archive (git recoverable). Confirm?");
   if (!ok) return false;
   try {
     unlinkSync(s.path);
   } catch (e) {
-    ctx.ui.notify(`删除失败：${errMsg(e)}`, "error");
+    ctx.ui.notify(`Delete failed: ${errMsg(e)}`, "error");
     return false;
   }
-  ctx.ui.notify("已删除会话存档", "info");
+  ctx.ui.notify("Archive deleted", "info");
   return true;
 }
 
@@ -108,27 +108,27 @@ async function renameArchived(
   ctx: ExtensionCommandContext,
   s: ArchivedSession,
 ): Promise<boolean> {
-  const name = ((await ctx.ui.input("会话名称（留空取消）", s.name ?? "")) ?? "").trim();
+  const name = ((await ctx.ui.input("Session name (empty to cancel)", s.name ?? "")) ?? "").trim();
   if (!name) return false; // 取消/空名
   try {
     const record = { type: "session_info", name };
     appendFileSync(s.path, `${JSON.stringify(record)}\n`, "utf-8");
   } catch (e) {
-    ctx.ui.notify(`重命名失败：${errMsg(e)}`, "error");
+    ctx.ui.notify(`Rename failed: ${errMsg(e)}`, "error");
     return false;
   }
-  ctx.ui.notify(`已重命名为：${name}`, "info");
+  ctx.ui.notify(`Renamed to: ${name}`, "info");
   return true;
 }
 
 export default function (pi: ExtensionAPI) {
   // /sessions：浏览仓库存档会话，一键恢复到本机并切换
   registerDpiCommand(pi, "dpi-sessions", {
-    description: "浏览仓库存档会话（vim 导航：j/k、gg/G、/过滤），一键恢复到本机并切换",
+    description: "Browse archived sessions (vim nav: j/k, gg/G, / filter), restore and switch",
     handler: async (_args, ctx) => {
       const cfg = loadConfig();
       if (!cfg.repoUrl) {
-        ctx.ui.notify("未绑定内容仓库，请先 /agent-login", "warning");
+        ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
         return;
       }
       const repo = cfg.repoPath;
@@ -137,7 +137,7 @@ export default function (pi: ExtensionAPI) {
 
       const archived = scanArchived(repo);
       if (archived.length === 0) {
-        ctx.ui.notify("仓库中还没有会话存档（/record on 后按 agent 自动归档）", "info");
+        ctx.ui.notify("No archived sessions yet (/dpi-record on archives on exit)", "info");
         return;
       }
 
@@ -147,8 +147,8 @@ export default function (pi: ExtensionAPI) {
         for (const s of archived) counts.set(s.agent, (counts.get(s.agent) ?? 0) + 1);
         const lines = [...counts.entries()]
           .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([a, n]) => `${a}: ${n} 个`);
-        ctx.ui.notify(`会话存档（共 ${archived.length} 个）\n${lines.join("\n")}`, "info");
+          .map(([a, n]) => `${a}: ${n}`);
+        ctx.ui.notify(`Session archives (${archived.length} total)\n${lines.join("\n")}`, "info");
         return;
       }
 

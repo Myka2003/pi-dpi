@@ -63,7 +63,7 @@ const config: RegistryManagerConfig = {
 export default function (pi: ExtensionAPI) {
   // /extensions：交互勾选/取消当前 agent 的扩展，或删除注册表扩展
   registerDpiCommand(pi, "dpi-extensions", {
-    description: "交互管理当前 agent 的扩展组合（勾选/删除注册表扩展）",
+    description: "Manage current agent extensions (toggle/delete registry extensions)",
     handler: async (_args, ctx) => {
       await runRegistryManager(ctx, config);
     },

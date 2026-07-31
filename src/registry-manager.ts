@@ -79,17 +79,17 @@ async function deleteFlow(
     companion && companion.entryExists(repo, name) &&
     existsSync(join(repo, companion.registryDir, name));
   const companionNote = hasCompanion
-    ? `\n\n⚠ 发现同名${companion!.companionLabel}（${companion!.registryDir}/${name}/），将一并删除（同名约定：${rc.kindLabel}与配套${companion!.companionLabel}同名联动）`
+    ? `\n\n⚠ Found matching ${companion!.companionLabel.toLowerCase()} (${companion!.registryDir}/${name}/), will delete it too (same-name convention)`
     : "";
   const ok = await ctx.ui.confirm(
-    `删除${rc.kindLabel}`,
-    `删除该${rc.kindLabel}（${name}）并从所有 agent 声明中移除（git 可恢复）。${companionNote}确认？`,
+    `Delete ${rc.kindLabel.toLowerCase()}`,
+    `Delete ${rc.kindLabel.toLowerCase()} "${name}" and remove from all agent manifests (git recoverable).${companionNote} Confirm?`,
   );
   if (!ok) return false;
   try {
     rc.deletePath(repo, name);
   } catch (e) {
-    ctx.ui.notify(`删除失败：${errMsg(e)}`, "error");
+    ctx.ui.notify(`Delete failed: ${errMsg(e)}`, "error");
     return false;
   }
   let affected = stripFromAllAgents(repo, rc, rc.declaredField, name);
@@ -109,7 +109,7 @@ async function deleteFlow(
     }
   }
   ctx.ui.notify(
-    `已删除 ${name}（影响 ${affected} 个 agent${hasCompanion ? `，配套${companion?.companionLabel}联动删除影响 ${companionAffected} 个` : ""}）`,
+    `Deleted ${name} (affected ${affected} agent${affected === 1 ? "" : "s"}${hasCompanion ? `, companion ${companion?.companionLabel.toLowerCase()} also deleted (${companionAffected})` : ""})`,
     "info",
   );
   return true;
@@ -126,7 +126,7 @@ export async function runRegistryManager(
 ): Promise<void> {
   const cfg = loadConfig();
   if (!cfg.repoUrl) {
-    ctx.ui.notify("未绑定内容仓库，请先 /agent-login", "warning");
+    ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
     return;
   }
   const repo = cfg.repoPath;
@@ -135,7 +135,7 @@ export async function runRegistryManager(
   if (!ctx.hasUI) {
     const declared = rc.readDeclared(repo, agent);
     ctx.ui.notify(
-      `当前 agent: ${agent}\n已声明${rc.kindLabel}: ${declared.join(", ") || "（无）"}`,
+      `Agent: ${agent}\nDeclared ${rc.kindLabel.toLowerCase()}s: ${declared.join(", ") || "(none)"}`,
       "info",
     );
     return;
@@ -154,10 +154,10 @@ export async function runRegistryManager(
       data: e,
     }));
     const res = await showVimListPicker(ctx, {
-      title: `${rc.kindLabel} — ${agent}（● 已声明）`,
+      title: `${rc.kindLabel} — ${agent} (● declared)`,
       items,
       mode: "toggle",
-      actions: [{ key: "d", id: "delete", hint: "d 删除" }],
+      actions: [{ key: "d", id: "delete", hint: "d delete" }],
     });
     if (!res) break; // TUI 不可用/异常
     if (res.action === "delete" && res.item) {
@@ -172,7 +172,7 @@ export async function runRegistryManager(
       if (rc.writeDeclared(repo, agent, next)) {
         dirty = true;
       } else {
-        ctx.ui.notify(`写入 agents/${agent}/agent.json 失败`, "error");
+        ctx.ui.notify(`Failed to write agents/${agent}/agent.json`, "error");
       }
     }
     break;
@@ -188,5 +188,5 @@ export async function runRegistryManager(
     // reload 失败不影响已保存的组合
   }
   const count = rc.readDeclared(repo, agent).length;
-  ctx.ui.notify(`已保存：${agent} 现在启用 ${count} 个${rc.kindLabel}`, "info");
+  ctx.ui.notify(`Saved: ${agent} now has ${count} ${rc.kindLabel.toLowerCase()}${count === 1 ? "" : "s"}`, "info");
 }

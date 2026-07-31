@@ -145,7 +145,7 @@ export default function (pi: ExtensionAPI) {
       const root = sessionsRoot();
       if (!root) return;
       if (!file || !existsSync(file)) return;
-      ctx.ui.notify("正在保存会话…", "info");
+      ctx.ui.notify("Saving session…", "info");
       const dir = join(root, archiveAgentName());
       mkdirSync(dir, { recursive: true });
       copyFileSync(file, join(dir, basename(file)));
@@ -175,44 +175,44 @@ export default function (pi: ExtensionAPI) {
   });
 
   registerDpiCommand(pi, "dpi-session-repair", {
-    description: "会话自愈：清理当前会话文件中的空 assistant 坏消息（400/429/中断残留），重进会话生效",
+    description: "Repair session file: clean empty assistant messages (400/429/abort leftovers)",
     handler: async (_args, ctx) => {
       try {
         const file = ctx.sessionManager.getSessionFile();
         if (!file) {
-          ctx.ui.notify("当前没有可修复的会话文件", "warning");
+          ctx.ui.notify("No session file to repair", "warning");
           return;
         }
         const removed = repairSessionFile(file);
         ctx.ui.notify(
           removed > 0
-            ? `已清理 ${removed} 条坏消息。当前会话内存仍含残留，请退出后重新进入生效`
-            : "会话文件健康，无需修复",
+            ? `Cleaned ${removed} bad messages. Current session memory still holds them; exit and resume to apply`
+            : "Session file healthy, nothing to repair",
           "info",
         );
       } catch (e) {
-        ctx.ui.notify(`修复失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(`Repair failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
     },
   });
 
   registerDpiCommand(pi, "dpi-record", {
-    description: "会话存档开关：/record on|off|status",
+    description: "Session archive toggle: /dpi-record on|off|status",
     handler: async (args, ctx) => {
       const sub = (args ?? "").trim().toLowerCase();
       if (sub === "on" || sub === "off") {
         saveConfig({ recordSessions: sub === "on" });
-        ctx.ui.notify(`会话存档已${sub === "on" ? "开启" : "关闭"}`, "info");
+        ctx.ui.notify(`Session archiving ${sub === "on" ? "enabled" : "disabled"}`, "info");
         return;
       }
       if (sub === "status" || sub === "") {
         ctx.ui.notify(
-          `会话存档当前状态：${loadConfig().recordSessions ? "on（开启）" : "off（关闭）"}`,
+          `Session archiving: ${loadConfig().recordSessions ? "on" : "off"}`,
           "info",
         );
         return;
       }
-      ctx.ui.notify("用法: /record on|off|status", "warning");
+      ctx.ui.notify("Usage: /dpi-record on|off|status", "warning");
     },
   });
 }

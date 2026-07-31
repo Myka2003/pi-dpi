@@ -114,11 +114,24 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     );
   });
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
+  // 当前会话：名字（/dpi 或 pi 的 /name 设置）+ 文件名
+  let sessionName = "";
+  let sessionFile = "";
+  try {
+    sessionName = ctx.sessionManager.getSessionName() ?? "";
+    sessionFile = ctx.sessionManager.getSessionFile() ?? "";
+    sessionFile = sessionFile.split("/").pop() ?? "";
+  } catch {
+    // 会话信息不可用不阻断卡片
+  }
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
     const section = (name: string, body: string) =>
       `${theme.fg("mdHeading", `[${name}]`)}\n${theme.fg("dim", `  ${body}`)}`;
-    const sections = [section("Agent", title ? `${agent} — ${title}` : agent)];
+    const sections = [
+      section("Agent", title ? `${agent} — ${title}` : agent),
+      section("Session", sessionName ? `${sessionName} · ${sessionFile}` : sessionFile || "(none)"),
+    ];
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
@@ -166,6 +179,13 @@ export default function (pi: ExtensionAPI) {
     sessionCtx = null;
   });
 
+  // 会话改名（/name 等）后重绘卡片，让 [Session] 段实时反映
+  pi.on("session_info_changed", async (_event, ctx) => {
+    const repo = repoPath();
+    if (!repo) return;
+    showAgentCard(ctx, currentAgent());
+  });
+
   // 每轮开始前：注入 SYSTEM.md + 顺手刷新面板（保证轮开始时正确）
   pi.on("before_agent_start", async (event, ctx) => {
     const repo = repoPath();
@@ -205,11 +225,11 @@ export default function (pi: ExtensionAPI) {
 
   // /agent [name]：带参数直接切换；无参数时交互选择或报告当前 agent
   registerDpiCommand(pi, "dpi-agent", {
-    description: "切换当前 agent；无参数时列出所有 agent 供选择",
+    description: "Switch agent; list all agents when no argument",
     handler: async (args, ctx) => {
       const repo = repoPath();
       if (!repo) {
-        ctx.ui.notify("未绑定内容仓库，请先 /agent-login", "warning");
+        ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
         return;
       }
       const agents = scanAgents(repo);
@@ -217,25 +237,25 @@ export default function (pi: ExtensionAPI) {
       if (name) {
         // agents 来自目录扫描，includes 校验同时起到防路径穿越作用
         if (!agents.includes(name)) {
-          ctx.ui.notify(`未知 agent: ${name}（可用: ${agents.join(", ") || "无"}）`, "error");
+          ctx.ui.notify(`Unknown agent: ${name} (available: ${agents.join(", ") || "none"})`, "error");
           return;
         }
         saveConfig({ currentAgent: name });
         showAgentCard(ctx, name);
         // 重载前先同步扩展过滤器，让 reload 按新 agent 的扩展声明隔离加载
         syncExtensionFilter(loadConfig());
-        ctx.ui.notify(`已切换到 agent: ${name}，正在重载资源…`, "info");
+        ctx.ui.notify(`Switched to agent: ${name}, reloading…`, "info");
         // 重载让 resources_discover 按新 agent 的声明重新发现技能
         await ctx.reload();
         return;
       }
       const current = currentAgent();
       if (!ctx.hasUI) {
-        ctx.ui.notify(`当前 agent: ${current}`, "info");
+        ctx.ui.notify(`Current agent: ${current}`, "info");
         return;
       }
       if (agents.length === 0) {
-        ctx.ui.notify(`当前 agent: ${current}（agents/ 下暂无可用 agent）`, "info");
+        ctx.ui.notify(`Current agent: ${current} (no agents found)`, "info");
         return;
       }
       // vim 选择器（select 模式），光标预定位当前 agent；description 作后缀
@@ -248,7 +268,7 @@ export default function (pi: ExtensionAPI) {
         };
       });
       const res = await showVimListPicker(ctx, {
-        title: `选择 agent（当前: ${current}）`,
+        title: `Select agent (current: ${current})`,
         items,
         mode: "select",
         initialId: current,
@@ -259,7 +279,7 @@ export default function (pi: ExtensionAPI) {
       showAgentCard(ctx, picked);
       // 重载前先同步扩展过滤器，让 reload 按新 agent 的扩展声明隔离加载
       syncExtensionFilter(loadConfig());
-      ctx.ui.notify(`已切换到 agent: ${picked}，正在重载资源…`, "info");
+      ctx.ui.notify(`Switched to agent: ${picked}, reloading…`, "info");
       await ctx.reload();
     },
   });

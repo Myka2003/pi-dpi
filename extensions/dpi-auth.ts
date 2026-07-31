@@ -242,10 +242,10 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   const existing = loadConfig();
   if (existing.repoUrl && (hasToken() || !remoteNeedsToken(existing.remoteKind))) {
     const again = ctx.hasUI
-      ? await ctx.ui.confirm("重新绑定", `已绑定内容仓库：\n${existing.repoUrl}\n是否重新绑定？`)
+      ? await ctx.ui.confirm("Rebind", `Already bound to:\n${existing.repoUrl}\nRebind anyway?`)
       : false;
     if (!again) {
-      ctx.ui.notify("已取消，保持现有绑定", "info");
+      ctx.ui.notify("Cancelled, keeping current binding", "info");
       return;
     }
   }
@@ -255,20 +255,20 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   if (!input) {
     if (!ctx.hasUI) {
       ctx.ui.notify(
-        "用法: /agent-login <仓库地址>（如 github.com/user/repo、git@host:user/repo.git、https://gitea.example.com/user/repo.git、~/srv/agents.git）",
+        "Usage: /dpi-agent-login <repo> (e.g. github.com/user/repo, git@host:user/repo.git, https://gitea.example.com/user/repo.git, ~/srv/agents.git)",
         "warning",
       );
       return;
     }
-    input = ((await ctx.ui.input("内容仓库地址", "github.com/oc101363-creator/Agent")) ?? "").trim();
+    input = ((await ctx.ui.input("Content repo URL", "github.com/oc101363-creator/Agent")) ?? "").trim();
     if (!input) {
-      ctx.ui.notify("已取消", "info");
+      ctx.ui.notify("Cancelled", "info");
       return;
     }
   }
   const remote = parseRepoRemote(input);
   if (!remote) {
-    ctx.ui.notify(`无法识别的仓库地址: ${input}`, "error");
+    ctx.ui.notify(`Unrecognized repo address: ${input}`, "error");
     return;
   }
   const { kind, url: repoUrl } = remote;
@@ -276,7 +276,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   // 2. 通用 HTTPS 必须交互问凭证，无 UI 模式无法完成认证
   if (kind === "http" && !ctx.hasUI) {
     ctx.ui.notify(
-      "通用 HTTPS 远端需要交互输入用户名与访问令牌，请在 pi 交互界面中执行 /agent-login",
+      "Generic HTTPS remote needs interactive username + token, run /dpi-agent-login in the pi TUI",
       "error",
     );
     return;
@@ -285,7 +285,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   // 3. ssh/local：零凭证也不走代理，绑定前先 ls-remote 探测可达性与仓库合法性
   if (kind === "ssh" || kind === "local") {
     if (kind === "local" && !existsSync(repoUrl)) {
-      ctx.ui.notify(`本地路径不存在：${repoUrl}`, "error");
+      ctx.ui.notify(`Local path does not exist: ${repoUrl}`, "error");
       return;
     }
     try {
@@ -293,8 +293,8 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
     } catch (e) {
       ctx.ui.notify(
         kind === "ssh"
-          ? `无法通过 SSH 访问该远端，请确认本机 ssh key 已授权：${errMsg(e)}`
-          : `该路径不是可访问的 git 仓库：${errMsg(e)}`,
+          ? `Cannot reach remote via SSH, check your ssh key: ${errMsg(e)}`
+          : `Not an accessible git repo: ${errMsg(e)}`,
         "error",
       );
       return;
@@ -304,21 +304,21 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   // 4. 代理选择（仅 github/http；ssh/local 跳过。无 UI 时走环境变量/直连）
   let proxy = "";
   if ((kind === "github" || kind === "http") && ctx.hasUI) {
-    const NO_PROXY = "不需要代理";
-    const LOCAL_PROXY = "使用 127.0.0.1:7890（本地代理）";
-    const CUSTOM = "自定义输入…";
-    const title = kind === "github" ? "访问 GitHub 的代理设置" : "访问远端仓库的代理设置";
+    const NO_PROXY = "No proxy";
+    const LOCAL_PROXY = "Use 127.0.0.1:7890 (local proxy)";
+    const CUSTOM = "Custom…";
+    const title = kind === "github" ? "Proxy for GitHub access" : "Proxy for remote repo access";
     const picked = await ctx.ui.select(title, [NO_PROXY, LOCAL_PROXY, CUSTOM]);
     if (picked === undefined) {
-      ctx.ui.notify("已取消", "info");
+      ctx.ui.notify("Cancelled", "info");
       return;
     }
     if (picked === LOCAL_PROXY) {
       proxy = "http://127.0.0.1:7890";
     } else if (picked === CUSTOM) {
-      proxy = ((await ctx.ui.input("代理地址", "http://127.0.0.1:7890")) ?? "").trim();
+      proxy = ((await ctx.ui.input("Proxy URL", "http://127.0.0.1:7890")) ?? "").trim();
       if (!proxy) {
-        ctx.ui.notify("已取消", "info");
+        ctx.ui.notify("Cancelled", "info");
         return;
       }
     }
@@ -332,49 +332,49 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
       dc = await requestDeviceCode(proxy);
     } catch (e) {
       ctx.ui.notify(
-        `获取设备授权码失败：${errMsg(e)}\n请检查网络/代理设置${proxy ? `（当前代理: ${proxy}）` : "（未配置代理）"}`,
+        `Device code request failed: ${errMsg(e)}\nCheck network/proxy${proxy ? ` (proxy: ${proxy})` : " (no proxy)"}`,
         "error",
       );
       return;
     }
 
     // 展示授权码（widget 持久显示 + notify 兜底），轮询等待授权
-    ctx.ui.notify(`GitHub 授权：打开 ${dc.verification_uri} ，输入代码 ${dc.user_code}`, "info");
+    ctx.ui.notify(`GitHub auth: open ${dc.verification_uri}, enter code ${dc.user_code}`, "info");
     if (ctx.hasUI) {
       ctx.ui.setWidget(LOGIN_WIDGET, [
-        "GitHub 设备授权",
-        `  1. 浏览器打开 ${dc.verification_uri}`,
-        `  2. 输入代码 ${dc.user_code}`,
-        "  等待授权完成…",
+        "GitHub device authorization",
+        `  1. Open in browser: ${dc.verification_uri}`,
+        `  2. Enter code: ${dc.user_code}`,
+        "  Waiting for authorization…",
       ]);
     }
     let token: string;
     try {
       token = await pollForToken(dc, proxy);
     } catch (e) {
-      ctx.ui.notify(`授权未完成：${errMsg(e)}`, "error");
+      ctx.ui.notify(`Authorization incomplete: ${errMsg(e)}`, "error");
       return;
     } finally {
       clearLoginWidget(ctx);
     }
     writeToken(token);
-    ctx.ui.notify("授权成功，正在克隆内容仓库…", "info");
+    ctx.ui.notify("Authorized, cloning content repo…", "info");
   } else if (kind === "http") {
     // 通用 HTTPS：交互问 用户名 + 访问令牌，token 文件存两行（用户名\n令牌）
-    const user = ((await ctx.ui.input("远端账号用户名", "Gitea / GitLab / Codeberg 账号名")) ?? "").trim();
+    const user = ((await ctx.ui.input("Remote username", "Gitea / GitLab / Codeberg username")) ?? "").trim();
     if (!user) {
-      ctx.ui.notify("已取消", "info");
+      ctx.ui.notify("Cancelled", "info");
       return;
     }
-    const token = ((await ctx.ui.input("访问令牌 / 密码", "Personal Access Token")) ?? "").trim();
+    const token = ((await ctx.ui.input("Access token / password", "Personal Access Token")) ?? "").trim();
     if (!token) {
-      ctx.ui.notify("已取消", "info");
+      ctx.ui.notify("Cancelled", "info");
       return;
     }
     writeToken(token, user);
-    ctx.ui.notify("凭证已保存，正在克隆内容仓库…", "info");
+    ctx.ui.notify("Credentials saved, cloning content repo…", "info");
   } else {
-    ctx.ui.notify("正在克隆内容仓库…", "info");
+    ctx.ui.notify("Cloning content repo…", "info");
   }
 
   // 6. 克隆内容仓库（凭证已落盘，克隆失败可重跑 /agent-login 复用）
@@ -385,7 +385,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
     branch = await ensureRepo(ctx, repoUrl, repoPath, proxy, noAuth);
   } catch (e) {
     ctx.ui.notify(
-      `克隆失败：${errMsg(e)}\n请检查网络/代理设置后重新执行 /agent-login`,
+      `Clone failed: ${errMsg(e)}\nCheck network/proxy and retry /dpi-agent-login`,
       "error",
     );
     return;
@@ -397,7 +397,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   const agents = scanAgents(repoPath);
   if (agents.length === 0) {
     ctx.ui.notify(
-      `克隆完成但未发现 agents/*/SYSTEM.md，这不是一个 dpi 内容仓库：${repoPath}\n已保留本地目录，请检查仓库地址`,
+      `Cloned but no agents/*/SYSTEM.md found — not a dpi content repo: ${repoPath}\nLocal dir kept, check the repo address`,
       "error",
     );
     return;
@@ -415,7 +415,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   const declared = ensurePackageInSettings(repoPath);
 
   ctx.ui.notify(
-    `绑定成功 ✓\n类型: ${KIND_LABEL[kind]}\n仓库: ${repoUrl}\n本地: ${repoPath}\n可用 agents: ${agents.join(", ")}${declared ? "\n已声明为 pi 包（settings.json）" : ""}`,
+    `Bound ✓\nType: ${KIND_LABEL[kind]}\nRepo: ${repoUrl}\nLocal: ${repoPath}\nAgents: ${agents.join(", ")}${declared ? "\nDeclared as pi package (settings.json)" : ""}`,
     "info",
   );
 
@@ -431,34 +431,34 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
 
 export default function (pi: ExtensionAPI) {
   registerDpiCommand(pi, "dpi-agent-login", {
-    description: "绑定内容仓库：GitHub / SSH / 通用 HTTPS / 本地仓库（/agent-login [仓库地址]）",
+    description: "Bind content repo: GitHub / SSH / generic HTTPS / local (/dpi-agent-login [repo])",
     handler: async (args, ctx) => {
       try {
         await login(args, ctx);
       } catch (e) {
         clearLoginWidget(ctx);
-        ctx.ui.notify(`登录失败：${errMsg(e)}`, "error");
+        ctx.ui.notify(`Login failed: ${errMsg(e)}`, "error");
       }
     },
   });
 
   registerDpiCommand(pi, "dpi-agent-logout", {
-    description: "退出登录：清除本机访问令牌（本地仓库与配置保留）",
+    description: "Log out: clear local access token (repo and config kept)",
     handler: async (_args, ctx) => {
       try {
         if (!hasToken()) {
-          ctx.ui.notify("当前未登录", "info");
+          ctx.ui.notify("Not logged in", "info");
           return;
         }
         const ok = ctx.hasUI
-          ? await ctx.ui.confirm("退出登录", "清除本机保存的访问令牌？\n（本地仓库与配置保留，同步将停止）")
+          ? await ctx.ui.confirm("Log out", "Clear the saved access token?\n(Local repo and config are kept, sync will stop)")
           : false;
         if (!ok) {
-          ctx.ui.notify("已取消", "info");
+          ctx.ui.notify("Cancelled", "info");
           return;
         }
         clearToken();
-        ctx.ui.notify("已退出登录：访问令牌已清除，本地仓库与配置保留", "info");
+        ctx.ui.notify("Logged out: token cleared, local repo and config kept", "info");
       } catch (e) {
         ctx.ui.notify(`退出失败：${errMsg(e)}`, "error");
       }

@@ -77,7 +77,7 @@ const config: RegistryManagerConfig = {
 export default function (pi: ExtensionAPI) {
   // /skills：交互勾选/取消当前 agent 的技能，或删除注册表技能
   registerDpiCommand(pi, "dpi-skills", {
-    description: "交互管理当前 agent 的技能组合（勾选/删除注册表技能）",
+    description: "Manage current agent skill set (toggle/delete registry skills)",
     handler: async (_args, ctx) => {
       await runRegistryManager(ctx, config);
     },

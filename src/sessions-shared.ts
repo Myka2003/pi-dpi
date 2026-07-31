@@ -190,18 +190,18 @@ export function scanArchived(repo: string): ArchivedSession[] {
 
 /** 相对时间：刚刚 / N分钟前 / N小时前 / N天前 / N个月前 / N年前 */
 export function relTime(ms: number): string {
-  if (ms <= 0) return "时间未知";
+  if (ms <= 0) return "unknown";
   const diff = Date.now() - ms;
-  if (diff < 60_000) return "刚刚";
+  if (diff < 60_000) return "just now";
   const min = Math.floor(diff / 60_000);
-  if (min < 60) return `${min}分钟前`;
+  if (min < 60) return `${min}m ago`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `${h}小时前`;
+  if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}天前`;
+  if (d < 30) return `${d}d ago`;
   const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}个月前`;
-  return `${Math.floor(mo / 12)}年前`;
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
 }
 
 /** 列表条目标题：name ?? 固定格式「MM-DD 目录 · 首条消息」；partial 按文件名展示 */

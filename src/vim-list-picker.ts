@@ -308,7 +308,7 @@ export class VimListPicker<T> implements Component {
 
     // 列表
     if (page.length === 0) {
-      lines.push(t.fg("dim", "  无匹配项（/ 清空过滤）"));
+      lines.push(t.fg("dim", "  no matches (/ to clear filter)"));
     } else {
       for (let i = 0; i < page.length; i++) {
         const item = page[i];
@@ -328,11 +328,11 @@ export class VimListPicker<T> implements Component {
     const hint =
       this.opts.hint ??
       (this.mode === "search"
-        ? "过滤输入中… Enter 确认 · Esc 清空退出"
+        ? "filtering… Enter confirm · Esc clear"
         : this.opts.mode === "toggle"
-          ? "j/k · ^D/^U ^F/^B · gg/G · / 过滤 · 空格/Enter 切换 · Esc 完成" +
+          ? "j/k nav · ^D/^U ^F/^B page · gg/G · / filter · Space/Enter toggle · Esc done" +
             (this.opts.actions?.length ? ` · ${this.opts.actions.map((a) => `${a.key} ${a.hint}`).join(" · ")}` : "")
-          : "j/k · ^D/^U ^F/^B · gg/G · / 过滤 · Enter 操作（恢复/重命名/删除） · Esc 取消");
+          : "j/k nav · ^D/^U ^F/^B page · gg/G · / filter · Enter action · Esc cancel");
     lines.push(t.fg("dim", hint.slice(0, width)));
     return lines;
   }

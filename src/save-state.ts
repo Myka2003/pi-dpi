@@ -82,15 +82,15 @@ export async function pendingCommits(cfg: DpiConfig): Promise<number | null> {
 /** 面板状态文案：✓ 已同步 / ⚠ N 个未推送 / ✗ 上次推送失败 / … 尚无记录 */
 export function formatSyncStatus(state: SaveState, pending: number | null): string {
   if (state.lastPush?.result === "failed") {
-    return `✗ 上次推送失败（${relTime(Date.parse(state.lastPush.time) || 0)}）`;
+    return `✗ Last push failed (${relTime(Date.parse(state.lastPush.time) || 0)})`;
   }
   if (pending !== null && pending > 0) {
-    return `⚠ ${pending} 个未推送`;
+    return `⚠ ${pending} unpushed`;
   }
   if (state.lastPush?.result === "ok" && pending === 0) {
-    return `✓ 已同步 ${relTime(Date.parse(state.lastPush.time) || 0)}`;
+    return `✓ Synced ${relTime(Date.parse(state.lastPush.time) || 0)}`;
   }
-  return "… 尚无保存记录";
+  return "… no save record yet";
 }
 
 /** 底栏短状态：sync: ✓ / sync: ⚠3 / sync: ✗ / sync: ? */
@@ -126,12 +126,12 @@ export const remoteSyncState: RemoteSyncState = {
 /** 远端同步状态的单行展示（面板 Sync 段用） */
 export function remoteSyncLine(): string {
   const s = remoteSyncState;
-  if (s.pulling) return "⟳ 正在同步远端…";
-  if (s.lastCheck === 0) return "远端：未检测（同步定时器未启动，请 /reload）";
+  if (s.pulling) return "⟳ syncing remote…";
+  if (s.lastCheck === 0) return "Remote: not checked (sync timer not started, /dpi-reload)";
   const ago = relTime(s.lastCheck);
-  if (s.lastResult === "failed") return `✗ 远端检测失败（${ago}）`;
-  if (s.lastPull >= s.lastCheck - 1) return `已拉取远端变更（${ago}）`;
-  return `远端一致（${ago}）`;
+  if (s.lastResult === "failed") return `✗ Remote check failed (${ago})`;
+  if (s.lastPull >= s.lastCheck - 1) return `Pulled remote changes (${ago})`;
+  return `Remote in sync (${ago})`;
 }
 
 /** 保存详情（面板 Sync 段第二行）：最近归档/推送的具体信息 */
@@ -139,11 +139,11 @@ export function formatSyncDetail(state: SaveState): string {
   const parts: string[] = [];
   if (state.lastArchive) {
     const t = state.lastArchive.time.slice(5, 16).replace("T", " ");
-    parts.push(`归档 ${t} ${state.lastArchive.session.slice(0, 24)}${state.lastArchive.result === "committed" ? " ✓" : ""}`);
+    parts.push(`archive ${t} ${state.lastArchive.session.slice(0, 24)}${state.lastArchive.result === "committed" ? " ✓" : ""}`);
   }
   if (state.lastPush) {
     const t = state.lastPush.time.slice(5, 16).replace("T", " ");
-    parts.push(`推送 ${t} ${state.lastPush.result === "ok" ? "✓" : `✗ ${state.lastPush.error ?? ""}`}`);
+    parts.push(`push ${t} ${state.lastPush.result === "ok" ? "✓" : `✗ ${state.lastPush.error ?? ""}`}`);
   }
   return parts.join("\n  ");
 }

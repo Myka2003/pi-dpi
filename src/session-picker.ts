@@ -33,10 +33,10 @@ export function showSessionPicker(
     }));
 
   return showVimListPicker(ctx, {
-    title: onlyCurrent ? `会话存档 — ${currentAgent}` : "会话存档",
+    title: onlyCurrent ? `Session Archive — ${currentAgent}` : "Session Archive",
     items,
     mode: "select",
-    actions: [{ key: "c", id: "cycle-filter", hint: "c 筛选" }],
+    actions: [{ key: "c", id: "cycle-filter", hint: "c filter" }],
   }).then((res) => {
     if (!res) return undefined;
     if (res.action === "cycle-filter") return "cycle-filter";

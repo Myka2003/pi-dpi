@@ -123,12 +123,12 @@ export default function (pi: ExtensionAPI) {
       if (cfg.repoUrl) {
         const pending = await pendingCommits(cfg);
         if (pending !== null && pending > 0) {
-          ctx.ui.notify(`⚠ ${pending} 个提交未推送（内容仓库），退出时自动重试`, "warning");
+          ctx.ui.notify(`⚠ ${pending} unpushed commit${pending === 1 ? "" : "s"} (content repo), retried on exit`, "warning");
         }
         // rebase 冲突中断：同步已停摆，必须人工解决——亮出冲突状态
         if (rebaseInProgress(cfg.repoPath)) {
           ctx.ui.notify(
-            "⚠ 内容仓库存在未解决的 rebase 冲突，同步已暂停；请手动解决冲突后执行 /dpi-sync",
+            "⚠ Unresolved rebase conflict in content repo, sync paused; resolve conflicts then /dpi-sync",
             "warning",
           );
         }
@@ -192,11 +192,11 @@ export default function (pi: ExtensionAPI) {
 
   // /sync：手动完整同步（拉 → 扫 → 推），结果显式反馈
   registerDpiCommand(pi, "dpi-sync", {
-    description: "手动同步内容仓库：pull --rebase → 清扫提交 → push；声明变更自动重载",
+    description: "Sync content repo: pull --rebase → sweep commit → push; auto-reload on declaration change",
     handler: async (_args, ctx) => {
       const t = target();
       if (!t) {
-        ctx.ui.notify("未绑定内容仓库或未登录，请先 /agent-login", "warning");
+        ctx.ui.notify("No content repo bound or not logged in, run /dpi-agent-login first", "warning");
         return;
       }
       // pull 前记录 agent.json 的 git 版本指纹，用于检测远端更新
@@ -232,20 +232,20 @@ export default function (pi: ExtensionAPI) {
           // 忽略
         }
         if (declBefore !== "" && declAfter !== "" && declBefore !== declAfter) {
-          ctx.ui.notify("同步完成：agent.json 已更新，自动重载生效…", "info");
+          ctx.ui.notify("Sync complete: agent.json updated, reloading…", "info");
           await ctx.reload();
           return;
         }
-        ctx.ui.notify(committed ? "同步完成：已清扫提交并推送" : "同步完成：无本地改动，已拉取并推送", "info");
+        ctx.ui.notify(committed ? "Sync complete: swept and pushed" : "Sync complete: no local changes, pulled and pushed", "info");
       } catch (e) {
-        ctx.ui.notify(`同步失败: ${e instanceof Error ? e.message : String(e)}`, "error");
+        ctx.ui.notify(`Sync failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
     },
   });
 
   // /dpi-save-status：查看保存状态（最近归档/推送/未推送数）
   registerDpiCommand(pi, "dpi-save-status", {
-    description: "查看保存状态：最近归档/推送、未推送提交数",
+    description: "Show save status: last archive/push, unpushed commits",
     handler: async (_args, ctx) => {
       const cfg = loadConfig();
       const state = readSaveState();
@@ -253,12 +253,12 @@ export default function (pi: ExtensionAPI) {
       const lines = [
         formatSyncStatus(state, pending),
         state.lastArchive
-          ? `最近归档: ${state.lastArchive.time.slice(0, 19).replace("T", " ")} ${state.lastArchive.session}（${state.lastArchive.result === "committed" ? "已提交" : "仅复制"}）`
-          : "最近归档: 无记录",
+          ? `Last archive: ${state.lastArchive.time.slice(0, 19).replace("T", " ")} ${state.lastArchive.session} (${state.lastArchive.result === "committed" ? "committed" : "copied"})`
+          : "Last archive: none",
         state.lastPush
-          ? `最近推送: ${state.lastPush.time.slice(0, 19).replace("T", " ")} ${state.lastPush.result === "ok" ? "成功" : `失败${state.lastPush.error ? `（${state.lastPush.error}）` : ""}`}`
-          : "最近推送: 无记录",
-        pending !== null ? `未推送提交: ${pending}` : "未推送提交: 未知（git 不可用）",
+          ? `Last push: ${state.lastPush.time.slice(0, 19).replace("T", " ")} ${state.lastPush.result === "ok" ? "ok" : `failed${state.lastPush.error ? ` (${state.lastPush.error})` : ""}`}`
+          : "Last push: none",
+        pending !== null ? `Unpushed commits: ${pending}` : "Unpushed commits: unknown (git unavailable)",
       ];
       ctx.ui.notify(lines.join("\n"), "info");
     },
