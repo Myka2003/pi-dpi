@@ -16,13 +16,22 @@ import { readAgentManifest, writeAgentManifestExtensions } from "../src/config.t
 import { runRegistryManager, type RegistryManagerConfig } from "../src/registry-manager.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
-/** 扫描仓库根 extensions/ 注册表：只认顶层 .ts 文件（basename 白名单校验），按名排序 */
+/** 扫描仓库根 extensions/ 注册表：顶层 .ts 文件 + 目录型（index.ts 或 package.json 入口），按名排序 */
 function scanRegistryExtensions(repo: string): { name: string; description: string }[] {
   try {
     const dir = join(repo, "extensions");
     if (!existsSync(dir)) return [];
     return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && /^[\w-]+\.ts$/.test(e.name))
+      .filter((e) => {
+        if (e.isFile() && /^[\w-]+\.ts$/.test(e.name)) return true;
+        if (e.isDirectory() && /^[\w-]+$/.test(e.name)) {
+          return (
+            existsSync(join(dir, e.name, "index.ts")) ||
+            existsSync(join(dir, e.name, "package.json"))
+          );
+        }
+        return false;
+      })
       .map((e) => ({ name: e.name.replace(/\.ts$/, ""), description: "" }))
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch {

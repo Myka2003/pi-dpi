@@ -103,10 +103,14 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
   const skills = manifest.skills.filter((name) =>
     existsSync(join(repo, "skills", name, "SKILL.md")),
   );
-  // 扩展列表同理：逐一校验注册表 extensions/<name>.ts 存在（与技能校验对称）
-  const extensions = manifest.extensions.filter((name) =>
-    existsSync(join(repo, "extensions", `${name}.ts`)),
-  );
+  // 扩展列表同理：单文件或目录型（extensions/<name>/index.ts）都校验（与 syncExtensionFilter 对称）
+  const extensions = manifest.extensions.filter((name) => {
+    const dir = join(repo, "extensions", name);
+    return (
+      existsSync(join(repo, "extensions", `${name}.ts`)) ||
+      existsSync(join(dir, "index.ts"))
+    );
+  });
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
