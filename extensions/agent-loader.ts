@@ -29,6 +29,11 @@ import {
   readSaveState,
   syncStatusShort,
 } from "../src/save-state.ts";
+import { DeclarationWatch } from "../src/declaration-watch.ts";
+
+// 声明文件变更检测：会话中 agent.json 被外部改动时，在轮结束空闲自动 reload
+const declarationWatch = new DeclarationWatch();
+let declarationDirty = false;
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
@@ -120,6 +125,11 @@ export default function (pi: ExtensionAPI) {
 
   // 每轮开始前，把当前 agent 的 SYSTEM.md 链式追加到系统提示词之后
   pi.on("before_agent_start", async (event) => {
+    // 会话中检测 agent.json 变化：标记后由 agent_settled 空闲时自动 reload
+    const repo0 = repoPath();
+    if (repo0 && !declarationDirty && declarationWatch.changed(repo0, currentAgent())) {
+      declarationDirty = true;
+    }
     const repo = repoPath();
     if (!repo) return;
     const agent = currentAgent();
@@ -128,6 +138,18 @@ export default function (pi: ExtensionAPI) {
     const content = readFileSync(file, "utf-8").trim();
     if (!content) return;
     return { systemPrompt: `${event.systemPrompt}\n\n${content}` };
+  });
+
+  // 轮结束空闲：声明文件有变化则自动 /reload 让新技能/扩展生效（不打断当前轮）
+  pi.on("agent_settled", (_event, ctx) => {
+    if (!declarationDirty) return;
+    declarationDirty = false;
+    ctx.ui.notify("agent.json 已变更，自动重载生效…", "info");
+    try {
+      pi.sendUserMessage("/reload", { deliverAs: "followUp" });
+    } catch {
+      // reload 排队失败：下次检测再试
+    }
   });
 
   // 技能发现的裁决点：只返回当前 agent 在 agent.json 里声明的技能

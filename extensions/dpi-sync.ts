@@ -107,12 +107,26 @@ export default function (pi: ExtensionAPI) {
 
   // /sync：手动完整同步（拉 → 扫 → 推），结果显式反馈
   registerDpiCommand(pi, "dpi-sync", {
-    description: "手动同步内容仓库：pull --rebase → 清扫提交 → push",
+    description: "手动同步内容仓库：pull --rebase → 清扫提交 → push；声明变更自动重载",
     handler: async (_args, ctx) => {
       const t = target();
       if (!t) {
         ctx.ui.notify("未绑定内容仓库或未登录，请先 /agent-login", "warning");
         return;
+      }
+      // pull 前记录 agent.json 的 git 版本指纹，用于检测远端更新
+      const cfg = loadConfig();
+      const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
+      const declPath = `agents/${agent}/agent.json`;
+      let declBefore = "";
+      try {
+        const { stdout } = await gitIn(t.repoPath, ["rev-parse", `HEAD:${declPath}`], {
+          ...t.opts,
+          timeoutMs: 8000,
+        });
+        declBefore = stdout.trim();
+      } catch {
+        // 文件未跟踪/无历史：跳过指纹对比
       }
       try {
         await gitIn(t.repoPath, ["pull", "--rebase", "--autostash"], {
@@ -121,6 +135,22 @@ export default function (pi: ExtensionAPI) {
         });
         const committed = await sweep(t, "[sync] sweep");
         await gitIn(t.repoPath, ["push"], { ...t.opts, timeoutMs: 60000 });
+        // 声明文件被远端更新（指纹变化）→ 自动重载让新技能/扩展生效
+        let declAfter = "";
+        try {
+          const { stdout } = await gitIn(t.repoPath, ["rev-parse", `HEAD:${declPath}`], {
+            ...t.opts,
+            timeoutMs: 8000,
+          });
+          declAfter = stdout.trim();
+        } catch {
+          // 忽略
+        }
+        if (declBefore !== "" && declAfter !== "" && declBefore !== declAfter) {
+          ctx.ui.notify("同步完成：agent.json 已更新，自动重载生效…", "info");
+          await ctx.reload();
+          return;
+        }
         ctx.ui.notify(committed ? "同步完成：已清扫提交并推送" : "同步完成：无本地改动，已拉取并推送", "info");
       } catch (e) {
         ctx.ui.notify(`同步失败: ${e instanceof Error ? e.message : String(e)}`, "error");
