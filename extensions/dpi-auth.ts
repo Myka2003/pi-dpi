@@ -40,6 +40,7 @@ import {
 import type { RemoteKind } from "../src/config.ts";
 import { git, gitIn } from "../src/git.ts";
 import { errMsg } from "../src/common.ts";
+import { ensureContentRepo } from "../src/bootstrap.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 const run = promisify(execFile);
@@ -285,8 +286,20 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
   // 3. ssh/local：零凭证也不走代理，绑定前先 ls-remote 探测可达性与仓库合法性
   if (kind === "ssh" || kind === "local") {
     if (kind === "local" && !existsSync(repoUrl)) {
-      ctx.ui.notify(`Local path does not exist: ${repoUrl}`, "error");
-      return;
+      // 本地路径不存在：自动初始化最小内容仓库（bootstrap）
+      const { created } = ensureContentRepo(repoUrl);
+      if (created) {
+        ctx.ui.notify(`Initialized minimal content repo at ${repoUrl}`, "info");
+      } else {
+        ctx.ui.notify(`Local path does not exist: ${repoUrl}`, "error");
+        return;
+      }
+    } else if (kind === "local" && !existsSync(join(repoUrl, "agents"))) {
+      // 存在但不是内容仓库：同样 bootstrap（不覆盖已有文件）
+      const { created } = ensureContentRepo(repoUrl);
+      if (created) {
+        ctx.ui.notify(`Initialized minimal content repo at ${repoUrl}`, "info");
+      }
     }
     try {
       await git(["ls-remote", repoUrl], { noAuth: true, timeoutMs: LS_REMOTE_TIMEOUT });
