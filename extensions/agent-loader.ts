@@ -23,6 +23,7 @@ import {
 } from "../src/config.ts";
 import { safeAgentName } from "../src/common.ts";
 import { showVimListPicker } from "../src/vim-list-picker.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
 
@@ -127,7 +128,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // /agent [name]：带参数直接切换；无参数时交互选择或报告当前 agent
-  pi.registerCommand("agent", {
+  registerDpiCommand(pi, "dpi-agent", {
     description: "切换当前 agent；无参数时列出所有 agent 供选择",
     handler: async (args, ctx) => {
       const repo = repoPath();

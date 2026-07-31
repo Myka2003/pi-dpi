@@ -24,6 +24,7 @@ import { loadConfig } from "../src/config.ts";
 import { errMsg } from "../src/common.ts";
 import { entryLabel, scanArchived, type ArchivedSession } from "../src/sessions-shared.ts";
 import { showSessionPicker } from "../src/session-picker.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 // 子菜单固定项
 const RESTORE_ITEM = "↩ 恢复到本机并切换";
@@ -103,7 +104,7 @@ async function deleteArchived(
 
 export default function (pi: ExtensionAPI) {
   // /sessions：浏览仓库存档会话，一键恢复到本机并切换
-  pi.registerCommand("sessions", {
+  registerDpiCommand(pi, "dpi-sessions", {
     description: "浏览仓库存档会话（vim 导航：j/k、gg/G、/过滤），一键恢复到本机并切换",
     handler: async (_args, ctx) => {
       const cfg = loadConfig();

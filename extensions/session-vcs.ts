@@ -34,6 +34,7 @@ import {
 import { basename, join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { gitIn } from "../src/git.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 /**
  * 清理会话文件中的空 assistant 坏消息（content: []），有改动才写回。
@@ -162,7 +163,7 @@ export default function (pi: ExtensionAPI) {
     migrateLegacySessions(root);
   });
 
-  pi.registerCommand("session-repair", {
+  registerDpiCommand(pi, "dpi-session-repair", {
     description: "会话自愈：清理当前会话文件中的空 assistant 坏消息（400/429/中断残留），重进会话生效",
     handler: async (_args, ctx) => {
       try {
@@ -184,7 +185,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("record", {
+  registerDpiCommand(pi, "dpi-record", {
     description: "会话存档开关：/record on|off|status",
     handler: async (args, ctx) => {
       const sub = (args ?? "").trim().toLowerCase();

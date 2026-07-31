@@ -12,17 +12,17 @@ agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、�
 pi install git:github.com/oc101363-creator/pi-dpi
 ```
 
-## 使用：`/agent-login`
+## 使用：`/dpi-agent-login`
 
 安装后第一次使用，在 pi 中执行：
 
 ```
-/agent-login
+/dpi-agent-login
 ```
 
 完整流程：
 
-1. **仓库地址**：直接 `/agent-login <地址>` 或交互输入。地址格式自动决定远端类型
+1. **仓库地址**：直接 `/dpi-agent-login <地址>` 或交互输入。地址格式自动决定远端类型
    （见下方「远端类型矩阵」）：GitHub 写法（`user/repo`、`github.com/user/repo`、
    `https://…`）归一化为 `https://github.com/user/repo.git`；`git@…`/`ssh://…`
    走 SSH、`https://<自托管>/…` 走通用 HTTPS、本地路径/`file://` 走本地协议，
@@ -44,7 +44,7 @@ pi install git:github.com/oc101363-creator/pi-dpi
 
 ### 远端类型矩阵
 
-`/agent-login` 根据地址格式自动识别远端类型，无需手动选择：
+`/dpi-agent-login` 根据地址格式自动识别远端类型，无需手动选择：
 
 | 地址写法 | 类型 | 认证方式 |
 | --- | --- | --- |
@@ -56,9 +56,9 @@ pi install git:github.com/oc101363-creator/pi-dpi
 配置示例：
 
 ```
-/agent-login git@git.example.com:user/agents.git        # SSH 远端
-/agent-login https://gitea.example.com/user/agents.git  # 通用 HTTPS
-/agent-login ~/srv/agents.git                           # 本地仓库
+/dpi-agent-login git@git.example.com:user/agents.git        # SSH 远端
+/dpi-agent-login https://gitea.example.com/user/agents.git  # 通用 HTTPS
+/dpi-agent-login ~/srv/agents.git                           # 本地仓库
 ```
 
 SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLab / Codeberg
@@ -69,22 +69,25 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 
 | 命令 | 作用 |
 | --- | --- |
-| `/agent-login [仓库地址]` | 绑定/重新绑定内容仓库 |
-| `/agent-logout` | 清除本机 token（本地仓库与配置保留） |
-| `/agent [名字]` | 查看/切换当前 agent |
-| `/skills` | 管理当前 agent 的技能组合：勾选/取消、删除注册表技能 |
-| `/extensions` | 管理当前 agent 的扩展组合：勾选/取消、删除注册表扩展 |
-| `/sync` | 手动同步内容仓库（pull --rebase → 清扫提交 → push） |
-| `/record on\|off\|status` | 会话存档开关 |
-| `/sessions` | 浏览仓库存档会话，一键恢复到本机并切换 |
-| `/session-repair` | 手动清理当前会话文件中的坏消息（重进会话生效） |
+| `/dpi-agent-login [仓库地址]` | 绑定/重新绑定内容仓库 |
+| `/dpi-agent-logout` | 清除本机 token（本地仓库与配置保留） |
+| `/dpi-agent [名字]` | 查看/切换当前 agent |
+| `/dpi-skills` | 管理当前 agent 的技能组合：勾选/取消、删除注册表技能 |
+| `/dpi-extensions` | 管理当前 agent 的扩展组合：勾选/取消、删除注册表扩展 |
+| `/dpi-sync` | 手动同步内容仓库（pull --rebase → 清扫提交 → push） |
+| `/dpi-record on\|off\|status` | 会话存档开关 |
+| `/dpi-sessions` | 浏览仓库存档会话，一键恢复到本机并切换 |
+| `/dpi-session-repair` | 手动清理当前会话文件中的坏消息（重进会话生效） |
+| `/dpi-save-status` | 查看保存状态：最近归档/推送、未推送提交数 |
+
+> 旧命令名（`/agent-login`、`/sessions` 等）仍可用作 alias，1.0 前移除；新命令统一 `/dpi-` 前缀。
 
 自动同步：pi 启动时 `pull --rebase --autostash` + 清扫推送，退出时再清扫推送一次；
 全部静默容错，失败（断网/冲突）不影响 pi 启动。
 
 会话自愈：网关 400/429 失败或用户中断会把空 assistant 消息写进会话文件，此后每轮
 请求都被协议拒绝、会话"死亡"。引擎在退出时（归档前）与切换会话时自动清理坏消息，
-归档进仓库的永远是干净版；日常无感，中招时也可 `/session-repair` 手动修复。
+归档进仓库的永远是干净版；日常无感，中招时也可 `/dpi-session-repair` 手动修复。
 
 ## 内容仓库结构约定
 
@@ -110,10 +113,10 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 
 新增 agent = 新增 `agents/<name>/{SYSTEM.md,agent.json}` + 在 `skills/` 注册表挑技能
 填进 `skills` 数组，无需改任何代码。新增技能 = 在 `skills/` 下加一个目录，然后由需要的
-agent 在各自的 `agent.json` 里声明。日常增删技能、调整组合不需要手编文件，用 `/skills`
+agent 在各自的 `agent.json` 里声明。日常增删技能、调整组合不需要手编文件，用 `/dpi-skills`
 交互完成（勾选/取消即写回 `agent.json`，也可删除注册表技能）。扩展同理：新增扩展 =
 在 `extensions/` 下加一个 `.ts` 文件，由需要的 agent 在 `agent.json` 的 `extensions`
-数组里声明，日常管理用 `/extensions` 交互完成。
+数组里声明，日常管理用 `/dpi-extensions` 交互完成。
 
 ## per-agent 扩展
 
@@ -121,7 +124,7 @@ agent 在各自的 `agent.json` 里声明。日常增删技能、调整组合不
 任何 agent。机制一句话：**切换 agent 时引擎把内容包 settings 条目的 `extensions`
 过滤器改写为当前 agent 声明的白名单，过滤发生在 import 之前 = 真隔离**（未声明的
 扩展文件根本不会被 jiti 执行）；代价是切换即全量 `reload`。启动时引擎还会自动对齐
-一次过滤器（启动自愈），`agent.json` 被外部编辑或 `/sync` 拉取后，下一次重载即收敛。
+一次过滤器（启动自愈），`agent.json` 被外部编辑或 `/dpi-sync` 拉取后，下一次重载即收敛。
 
 ## superpowers 支持
 

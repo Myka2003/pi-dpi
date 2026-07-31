@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { hasToken, loadConfig, remoteNeedsToken, tokenPath } from "../src/config.ts";
 import { GIT_TIMEOUT, gitIn } from "../src/git.ts";
 import type { GitOptions } from "../src/git.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 interface SyncTarget {
   repoPath: string;
@@ -84,7 +85,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // /sync：手动完整同步（拉 → 扫 → 推），结果显式反馈
-  pi.registerCommand("sync", {
+  registerDpiCommand(pi, "dpi-sync", {
     description: "手动同步内容仓库：pull --rebase → 清扫提交 → push",
     handler: async (_args, ctx) => {
       const t = target();
