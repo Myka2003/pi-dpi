@@ -40,6 +40,7 @@ import {
 import type { RemoteKind } from "../src/config.ts";
 import { git, gitIn } from "../src/git.ts";
 import { errMsg } from "../src/common.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 const run = promisify(execFile);
 
@@ -429,7 +430,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerCommand("agent-login", {
+  registerDpiCommand(pi, "dpi-agent-login", {
     description: "绑定内容仓库：GitHub / SSH / 通用 HTTPS / 本地仓库（/agent-login [仓库地址]）",
     handler: async (args, ctx) => {
       try {
@@ -441,7 +442,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("agent-logout", {
+  registerDpiCommand(pi, "dpi-agent-logout", {
     description: "退出登录：清除本机访问令牌（本地仓库与配置保留）",
     handler: async (_args, ctx) => {
       try {

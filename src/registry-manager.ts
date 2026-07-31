@@ -1,9 +1,9 @@
 /**
  * registry-manager：注册表管理器泛型实现（/skills 与 /extensions 的共享逻辑）。
  *
- * 两个命令是同构的：扫描注册表 → 主循环（已声明的排前 ●、未声明的排后 ○，
- * 选中即切换并立即写回 agent.json）→ 删除流程（rm + 从所有 agent 声明剔除）
- * → 完成时 reload。差异只在注册表形态（技能=目录+SKILL.md+description，
+ * 两个命令是同构的：主循环用 VimListPicker（toggle 模式）——空格/Enter 切换
+ * 勾选（●/○），d 删除当前条目（confirm 后 rm + 从所有 agent 声明剔除），
+ * Esc/q 完成并写回声明。差异只在注册表形态（技能=目录+SKILL.md+description，
  * 扩展=顶层 .ts 文件）与写回函数，故抽成参数注入的单一实现。
  *
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展加载，无 default 导出会报错），
@@ -12,10 +12,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, readAgentManifest, syncExtensionFilter } from "./config.ts";
 import { errMsg, safeAgentName, scanManifestAgents } from "./common.ts";
-
-// 主列表末尾的两个固定特殊项
-const DELETE_ITEM = "✕ 删除注册表条目…";
-const DONE_ITEM = "✓ 完成";
+import { showVimListPicker, type VimListItem } from "./vim-list-picker.ts";
 
 export interface RegistryEntry {
   name: string;
@@ -25,8 +22,6 @@ export interface RegistryEntry {
 export interface RegistryManagerConfig {
   /** 中文标签（选项标题/通知文案用）：技能 / 扩展 */
   kindLabel: string;
-  /** 注册表标签：注册表技能 / 注册表扩展 */
-  registryLabel: string;
   /** agent.json 里的声明字段名 */
   declaredField: "skills" | "extensions";
   /** 扫描注册表（白名单校验 + 排序由实现负责） */
@@ -39,34 +34,17 @@ export interface RegistryManagerConfig {
   deletePath(repo: string, name: string): void;
 }
 
-/** 选项文案：●/○ 标记 + 名字 + 可选 description 后缀 */
-function entryOption(declared: string[], e: RegistryEntry): string {
-  const mark = declared.includes(e.name) ? "●" : "○";
-  return e.description ? `${mark} ${e.name} — ${e.description}` : `${mark} ${e.name}`;
-}
-
-/** 删除流程：选条目 → confirm 确认 → deletePath + 从所有 agent 声明中剔除；取消返回 false */
+/** 删除流程：confirm 确认 → deletePath + 从所有 agent 声明中剔除；取消返回 false */
 async function deleteFlow(
   ctx: ExtensionCommandContext,
   repo: string,
   rc: RegistryManagerConfig,
+  name: string,
 ): Promise<boolean> {
-  const registry = rc.scanRegistry(repo);
-  if (registry.length === 0) {
-    ctx.ui.notify(`${rc.registryLabel}中没有可删除的条目`, "info");
-    return false;
-  }
-  const options = registry.map((e) =>
-    e.description ? `${e.name} — ${e.description}` : e.name,
-  );
-  const picked = await ctx.ui.select(`删除${rc.registryLabel} — 选择目标`, options);
-  if (picked === undefined) return false; // 取消：返回主列表
-  const idx = options.indexOf(picked);
-  const name = idx >= 0 ? registry[idx].name : "";
   if (!/^[\w-]+$/.test(name)) return false;
   const ok = await ctx.ui.confirm(
-    `删除${rc.registryLabel}`,
-    `删除该${rc.kindLabel}并从所有 agent 声明中移除（git 可恢复）。确认？`,
+    `删除${rc.kindLabel}`,
+    `删除该${rc.kindLabel}（${name}）并从所有 agent 声明中移除（git 可恢复）。确认？`,
   );
   if (!ok) return false;
   try {
@@ -89,8 +67,8 @@ async function deleteFlow(
 
 /**
  * /skills 与 /extensions 命令的共享实现：
- * 非 UI 只报已声明列表；UI 主循环勾选/取消/删除，完成时（有改动）reload。
- * 扩展命令额外在 reload 前同步扩展过滤器（syncExtensionFilter）。
+ * 非 UI 只报已声明列表；UI 用 VimListPicker toggle 模式（勾选/删除），
+ * 完成时（有改动）reload；扩展命令额外先同步扩展过滤器。
  */
 export async function runRegistryManager(
   ctx: ExtensionCommandContext,
@@ -113,36 +91,41 @@ export async function runRegistryManager(
     return;
   }
 
-  // 主循环：每次重读声明与注册表，已声明的排前、未声明的排后（各自按名排序），
-  // 选中即切换并立即写回（不打扰，重绘自然反映勾选状态），直到完成/取消
+  // 主循环：VimListPicker toggle 模式——空格/Enter 切换勾选，d 删除，
+  // Esc/q 完成；完成时把勾选集写回 agent.json（与现状一致则不写）
   let dirty = false;
   for (;;) {
     const registry = rc.scanRegistry(repo);
     const declared = rc.readDeclared(repo, agent);
-    const ordered = [
-      ...registry.filter((e) => declared.includes(e.name)),
-      ...registry.filter((e) => !declared.includes(e.name)),
-    ];
-    const options = ordered.map((e) => entryOption(declared, e));
-    options.push(DELETE_ITEM, DONE_ITEM);
-    const picked = await ctx.ui.select(`${rc.kindLabel} — ${agent}`, options);
-    if (picked === undefined || picked === DONE_ITEM) break;
-    if (picked === DELETE_ITEM) {
-      if (await deleteFlow(ctx, repo, rc)) dirty = true;
-      continue;
+    const items: VimListItem<RegistryEntry>[] = registry.map((e) => ({
+      id: e.name,
+      label: e.description ? `${e.name} — ${e.description}` : e.name,
+      checked: declared.includes(e.name),
+      data: e,
+    }));
+    const res = await showVimListPicker(ctx, {
+      title: `${rc.kindLabel} — ${agent}（● 已声明）`,
+      items,
+      mode: "toggle",
+      actions: [{ key: "d", id: "delete", hint: "d 删除" }],
+    });
+    if (!res) break; // TUI 不可用/异常
+    if (res.action === "delete" && res.item) {
+      if (await deleteFlow(ctx, repo, rc, res.item.data.name)) dirty = true;
+      continue; // 重开选择器（注册表已变化）
     }
-    // 选项字符串与排序后注册表顺序一一对应，按下标取回名字
-    const idx = options.indexOf(picked);
-    const name = idx >= 0 && idx < ordered.length ? ordered[idx].name : "";
-    if (!/^[\w-]+$/.test(name)) continue;
-    const next = declared.includes(name)
-      ? declared.filter((s) => s !== name)
-      : [...declared, name];
-    if (rc.writeDeclared(repo, agent, next)) {
-      dirty = true;
-    } else {
-      ctx.ui.notify(`写入 agents/${agent}/agent.json 失败`, "error");
+    // cancel / 完成：写回勾选集（无变化则不写）
+    const next = res.checked ?? declared;
+    const same =
+      next.length === declared.length && [...next].sort().join("\n") === [...declared].sort().join("\n");
+    if (!same) {
+      if (rc.writeDeclared(repo, agent, next)) {
+        dirty = true;
+      } else {
+        ctx.ui.notify(`写入 agents/${agent}/agent.json 失败`, "error");
+      }
     }
+    break;
   }
 
   if (!dirty) return; // 未改动：不打扰，直接返回

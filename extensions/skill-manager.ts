@@ -16,6 +16,7 @@ import {
   writeAgentManifestSkills,
 } from "../src/config.ts";
 import { runRegistryManager, type RegistryManagerConfig } from "../src/registry-manager.ts";
+import { registerDpiCommand } from "../src/command-alias.ts";
 
 /** 读 skills/<name>/SKILL.md frontmatter 的 description（单行），截断 ~40 字符 */
 function skillDescription(path: string): string {
@@ -58,7 +59,6 @@ function scanRegistrySkills(repo: string): { name: string; description: string }
 
 const config: RegistryManagerConfig = {
   kindLabel: "技能",
-  registryLabel: "注册表技能",
   declaredField: "skills",
   scanRegistry: scanRegistrySkills,
   readDeclared: (repo, agent) => readAgentManifest(repo, agent).skills,
@@ -69,7 +69,7 @@ const config: RegistryManagerConfig = {
 
 export default function (pi: ExtensionAPI) {
   // /skills：交互勾选/取消当前 agent 的技能，或删除注册表技能
-  pi.registerCommand("skills", {
+  registerDpiCommand(pi, "dpi-skills", {
     description: "交互管理当前 agent 的技能组合（勾选/删除注册表技能）",
     handler: async (_args, ctx) => {
       await runRegistryManager(ctx, config);
