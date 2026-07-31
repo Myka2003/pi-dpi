@@ -36,6 +36,32 @@ function rebaseInProgress(repoPath: string): boolean {
   );
 }
 
+/** 远端声明监听：git rev-parse 取远端/本地 agent.json 的 blob 版本对比 */
+async function remoteDeclSha(
+  t: SyncTarget,
+  ref: string,
+  agent: string,
+): Promise<string> {
+  const { stdout } = await gitIn(
+    t.repoPath,
+    ["rev-parse", `${ref}:agents/${agent}/agent.json`],
+    { ...t.opts, timeoutMs: GIT_TIMEOUT },
+  );
+  return stdout.trim();
+}
+
+/** 远端监听轮次：fetch 更新远端引用 → 对比 agent.json 远端/本地 blob 版本；变了返回 true */
+async function remoteDeclChanged(t: SyncTarget, cfg: { branch: string; currentAgent: string }): Promise<boolean> {
+  try {
+    await gitIn(t.repoPath, ["fetch", "origin"], t.opts);
+    const remote = await remoteDeclSha(t, `origin/${cfg.branch}`, cfg.currentAgent);
+    const local = await remoteDeclSha(t, "HEAD", cfg.currentAgent);
+    return remote !== "" && local !== "" && remote !== local;
+  } catch {
+    return false; // fetch 失败静默（断网/凭据问题），下轮再试
+  }
+}
+
 /** 同步前提检查：已绑定 + 需要令牌的类型已登录 + 本地仓库存在；不满足返回 null */
 function target(): SyncTarget | null {  const cfg = loadConfig();
   if (!cfg.repoUrl || (remoteNeedsToken(cfg.remoteKind) && !hasToken())) return null;
@@ -108,6 +134,34 @@ export default function (pi: ExtensionAPI) {
       }
     } catch {
       // 绝不阻塞启动
+    }
+  });
+
+  // 远端声明监听：每 3 秒 fetch 检测 agent.json 远端/本地版本，变了立即 pull --rebase
+  // （autostash 保护）——本地文件变化由 DeclarationWatch 捕获，轮结束自动 reload。
+  // 这样远端改动（GitHub 编辑/其他机器推送）在数秒内同步到本会话，无需手动 reload。
+  let watchTimer: ReturnType<typeof setInterval> | null = null;
+  pi.on("session_start", async () => {
+    if (watchTimer) clearInterval(watchTimer);
+    const cfg = loadConfig();
+    if (!cfg.repoUrl) return;
+    const t = target();
+    if (!t) return;
+    watchTimer = setInterval(async () => {
+      if (await remoteDeclChanged(t, cfg)) {
+        try {
+          await gitIn(t.repoPath, ["pull", "--rebase", "--autostash"], t.opts);
+        } catch {
+          // 冲突/失败静默（rebase 中断已由 session_start 告警；下轮重试）
+        }
+      }
+    }, 3000);
+  });
+
+  pi.on("session_shutdown", async () => {
+    if (watchTimer) {
+      clearInterval(watchTimer);
+      watchTimer = null;
     }
   });
 
