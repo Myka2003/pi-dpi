@@ -332,7 +332,7 @@ export class VimListPicker<T> implements Component {
         : this.opts.mode === "toggle"
           ? "j/k · ^D/^U ^F/^B · gg/G · / 过滤 · 空格/Enter 切换 · Esc 完成" +
             (this.opts.actions?.length ? ` · ${this.opts.actions.map((a) => `${a.key} ${a.hint}`).join(" · ")}` : "")
-          : "j/k · ^D/^U ^F/^B · gg/G · / 过滤 · Enter 选择 · Esc 取消");
+          : "j/k · ^D/^U ^F/^B · gg/G · / 过滤 · Enter 操作（恢复/重命名/删除） · Esc 取消");
     lines.push(t.fg("dim", hint.slice(0, width)));
     return lines;
   }

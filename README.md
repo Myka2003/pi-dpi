@@ -80,7 +80,6 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 | `/dpi-session-repair` | 手动清理当前会话文件中的坏消息（重进会话生效） |
 | `/dpi-save-status` | 查看保存状态：最近归档/推送、未推送提交数 |
 
-> 旧命令名（`/agent-login`、`/sessions` 等）仍可用作 alias，1.0 前移除；新命令统一 `/dpi-` 前缀。
 
 自动同步：pi 启动时 `pull --rebase --autostash` + 清扫推送，退出时再清扫推送一次；
 全部静默容错，失败（断网/冲突）不影响 pi 启动。

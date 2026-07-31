@@ -162,7 +162,7 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
         if (!picked) return; // 取消/完成
-        const action = await ctx.ui.select(`会话 — ${entryLabel(picked)}`, [
+        const action = await ctx.ui.select(`会话操作 — ${entryLabel(picked)}`, [
           RESTORE_ITEM,
           RENAME_ITEM,
           DELETE_ITEM,
