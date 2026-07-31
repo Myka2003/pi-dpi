@@ -18,7 +18,7 @@
  * 文件读写逐步容错，绝不抛异常阻断 pi。
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.ts";
 import { errMsg } from "../src/common.ts";
@@ -28,6 +28,7 @@ import { registerDpiCommand } from "../src/command-alias.ts";
 
 // 子菜单固定项
 const RESTORE_ITEM = "↩ 恢复到本机并切换";
+const RENAME_ITEM = "✏ 重命名";
 const DELETE_ITEM = "✕ 删除存档（git 可恢复）";
 const BACK_ITEM = "← 返回";
 
@@ -102,6 +103,24 @@ async function deleteArchived(
   return true;
 }
 
+/** 重命名：追加 session_info 行（流式覆盖，解析取最新一条），返回是否成功 */
+async function renameArchived(
+  ctx: ExtensionCommandContext,
+  s: ArchivedSession,
+): Promise<boolean> {
+  const name = ((await ctx.ui.input("会话名称（留空取消）", s.name ?? "")) ?? "").trim();
+  if (!name) return false; // 取消/空名
+  try {
+    const record = { type: "session_info", name };
+    appendFileSync(s.path, `${JSON.stringify(record)}\n`, "utf-8");
+  } catch (e) {
+    ctx.ui.notify(`重命名失败：${errMsg(e)}`, "error");
+    return false;
+  }
+  ctx.ui.notify(`已重命名为：${name}`, "info");
+  return true;
+}
+
 export default function (pi: ExtensionAPI) {
   // /sessions：浏览仓库存档会话，一键恢复到本机并切换
   registerDpiCommand(pi, "dpi-sessions", {
@@ -145,11 +164,18 @@ export default function (pi: ExtensionAPI) {
         if (!picked) return; // 取消/完成
         const action = await ctx.ui.select(`会话 — ${entryLabel(picked)}`, [
           RESTORE_ITEM,
+          RENAME_ITEM,
           DELETE_ITEM,
           BACK_ITEM,
         ]);
         if (action === RESTORE_ITEM) {
           if (await restoreArchived(ctx, picked)) return; // 已切换会话：结束命令
+          continue;
+        }
+        if (action === RENAME_ITEM) {
+          if (await renameArchived(ctx, picked)) {
+            archivedNow = scanArchived(repo); // 重扫刷新列表（显示新名字）
+          }
           continue;
         }
         if (action === DELETE_ITEM) {
