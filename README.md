@@ -1,5 +1,7 @@
 # pi-dpi — dπ：拆解 π
 
+> English: [README.en.md](README.en.md) | 中文: 本文件
+
 **dπ = 拆解 π = 解耦分发。** pi-dpi 是 pi coding agent 的一个扩展插件（纯引擎，不含任何
 agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、技能、提示词、会话存档
 全部放进一个独立的**内容仓库**（你自己的 git 仓库），pi-dpi 只负责绑定、加载与同步。
