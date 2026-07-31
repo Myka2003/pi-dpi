@@ -22,6 +22,7 @@ import {
   syncExtensionFilter,
 } from "../src/config.ts";
 import { safeAgentName } from "../src/common.ts";
+import { showVimListPicker } from "../src/vim-list-picker.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
 
@@ -160,7 +161,22 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`当前 agent: ${current}（agents/ 下暂无可用 agent）`, "info");
         return;
       }
-      const picked = await ctx.ui.select(`选择 agent（当前: ${current}）`, agents);
+      // vim 选择器（select 模式），光标预定位当前 agent；description 作后缀
+      const items = agents.map((name) => {
+        const desc = readAgentManifest(repo, name).description;
+        return {
+          id: name,
+          label: desc ? `${name} — ${desc}` : name,
+          data: name,
+        };
+      });
+      const res = await showVimListPicker(ctx, {
+        title: `选择 agent（当前: ${current}）`,
+        items,
+        mode: "select",
+        initialId: current,
+      });
+      const picked = res?.action === "pick" ? res.item?.data : undefined;
       if (!picked) return; // 用户取消，不做更改
       saveConfig({ currentAgent: picked });
       showAgentCard(ctx, picked);
