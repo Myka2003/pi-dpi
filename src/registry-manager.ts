@@ -1,0 +1,159 @@
+/**
+ * registry-manager：注册表管理器泛型实现（/skills 与 /extensions 的共享逻辑）。
+ *
+ * 两个命令是同构的：扫描注册表 → 主循环（已声明的排前 ●、未声明的排后 ○，
+ * 选中即切换并立即写回 agent.json）→ 删除流程（rm + 从所有 agent 声明剔除）
+ * → 完成时 reload。差异只在注册表形态（技能=目录+SKILL.md+description，
+ * 扩展=顶层 .ts 文件）与写回函数，故抽成参数注入的单一实现。
+ *
+ * 本文件不放 extensions/（pi 会把每个 .ts 当扩展加载，无 default 导出会报错），
+ * 由 skill-manager.ts / ext-manager.ts 薄壳调用。
+ */
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { loadConfig, readAgentManifest, syncExtensionFilter } from "./config.ts";
+import { errMsg, safeAgentName, scanManifestAgents } from "./common.ts";
+
+// 主列表末尾的两个固定特殊项
+const DELETE_ITEM = "✕ 删除注册表条目…";
+const DONE_ITEM = "✓ 完成";
+
+export interface RegistryEntry {
+  name: string;
+  description: string;
+}
+
+export interface RegistryManagerConfig {
+  /** 中文标签（选项标题/通知文案用）：技能 / 扩展 */
+  kindLabel: string;
+  /** 注册表标签：注册表技能 / 注册表扩展 */
+  registryLabel: string;
+  /** agent.json 里的声明字段名 */
+  declaredField: "skills" | "extensions";
+  /** 扫描注册表（白名单校验 + 排序由实现负责） */
+  scanRegistry(repo: string): RegistryEntry[];
+  /** 读当前 agent 已声明列表 */
+  readDeclared(repo: string, agent: string): string[];
+  /** 写回当前 agent 声明列表；返回是否成功 */
+  writeDeclared(repo: string, agent: string, names: string[]): boolean;
+  /** 删除注册表条目（rm 目录或文件） */
+  deletePath(repo: string, name: string): void;
+}
+
+/** 选项文案：●/○ 标记 + 名字 + 可选 description 后缀 */
+function entryOption(declared: string[], e: RegistryEntry): string {
+  const mark = declared.includes(e.name) ? "●" : "○";
+  return e.description ? `${mark} ${e.name} — ${e.description}` : `${mark} ${e.name}`;
+}
+
+/** 删除流程：选条目 → confirm 确认 → deletePath + 从所有 agent 声明中剔除；取消返回 false */
+async function deleteFlow(
+  ctx: ExtensionCommandContext,
+  repo: string,
+  rc: RegistryManagerConfig,
+): Promise<boolean> {
+  const registry = rc.scanRegistry(repo);
+  if (registry.length === 0) {
+    ctx.ui.notify(`${rc.registryLabel}中没有可删除的条目`, "info");
+    return false;
+  }
+  const options = registry.map((e) =>
+    e.description ? `${e.name} — ${e.description}` : e.name,
+  );
+  const picked = await ctx.ui.select(`删除${rc.registryLabel} — 选择目标`, options);
+  if (picked === undefined) return false; // 取消：返回主列表
+  const idx = options.indexOf(picked);
+  const name = idx >= 0 ? registry[idx].name : "";
+  if (!/^[\w-]+$/.test(name)) return false;
+  const ok = await ctx.ui.confirm(
+    `删除${rc.registryLabel}`,
+    `删除该${rc.kindLabel}并从所有 agent 声明中移除（git 可恢复）。确认？`,
+  );
+  if (!ok) return false;
+  try {
+    rc.deletePath(repo, name);
+  } catch (e) {
+    ctx.ui.notify(`删除失败：${errMsg(e)}`, "error");
+    return false;
+  }
+  // 同步剔除所有 agent 的声明，避免残留指向已删除条目的名字
+  let affected = 0;
+  for (const agent of scanManifestAgents(repo)) {
+    const manifest = readAgentManifest(repo, agent);
+    const list = manifest[rc.declaredField];
+    if (!list.includes(name)) continue;
+    if (rc.writeDeclared(repo, agent, list.filter((s) => s !== name))) affected++;
+  }
+  ctx.ui.notify(`已删除 ${name}（影响 ${affected} 个 agent）`, "info");
+  return true;
+}
+
+/**
+ * /skills 与 /extensions 命令的共享实现：
+ * 非 UI 只报已声明列表；UI 主循环勾选/取消/删除，完成时（有改动）reload。
+ * 扩展命令额外在 reload 前同步扩展过滤器（syncExtensionFilter）。
+ */
+export async function runRegistryManager(
+  ctx: ExtensionCommandContext,
+  rc: RegistryManagerConfig,
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoUrl) {
+    ctx.ui.notify("未绑定内容仓库，请先 /agent-login", "warning");
+    return;
+  }
+  const repo = cfg.repoPath;
+  const agent = safeAgentName(cfg.currentAgent);
+
+  if (!ctx.hasUI) {
+    const declared = rc.readDeclared(repo, agent);
+    ctx.ui.notify(
+      `当前 agent: ${agent}\n已声明${rc.kindLabel}: ${declared.join(", ") || "（无）"}`,
+      "info",
+    );
+    return;
+  }
+
+  // 主循环：每次重读声明与注册表，已声明的排前、未声明的排后（各自按名排序），
+  // 选中即切换并立即写回（不打扰，重绘自然反映勾选状态），直到完成/取消
+  let dirty = false;
+  for (;;) {
+    const registry = rc.scanRegistry(repo);
+    const declared = rc.readDeclared(repo, agent);
+    const ordered = [
+      ...registry.filter((e) => declared.includes(e.name)),
+      ...registry.filter((e) => !declared.includes(e.name)),
+    ];
+    const options = ordered.map((e) => entryOption(declared, e));
+    options.push(DELETE_ITEM, DONE_ITEM);
+    const picked = await ctx.ui.select(`${rc.kindLabel} — ${agent}`, options);
+    if (picked === undefined || picked === DONE_ITEM) break;
+    if (picked === DELETE_ITEM) {
+      if (await deleteFlow(ctx, repo, rc)) dirty = true;
+      continue;
+    }
+    // 选项字符串与排序后注册表顺序一一对应，按下标取回名字
+    const idx = options.indexOf(picked);
+    const name = idx >= 0 && idx < ordered.length ? ordered[idx].name : "";
+    if (!/^[\w-]+$/.test(name)) continue;
+    const next = declared.includes(name)
+      ? declared.filter((s) => s !== name)
+      : [...declared, name];
+    if (rc.writeDeclared(repo, agent, next)) {
+      dirty = true;
+    } else {
+      ctx.ui.notify(`写入 agents/${agent}/agent.json 失败`, "error");
+    }
+  }
+
+  if (!dirty) return; // 未改动：不打扰，直接返回
+  // 扩展命令先同步内容包 extensions 过滤器（技能无此步骤）；再 reload
+  // 让 resources_discover 按新组合重新发现。失败不吞掉已写入的声明。
+  if (rc.declaredField === "extensions") syncExtensionFilter(loadConfig());
+  try {
+    await ctx.reload();
+  } catch {
+    // reload 失败不影响已保存的组合
+  }
+  const count = rc.readDeclared(repo, agent).length;
+  ctx.ui.notify(`已保存：${agent} 现在启用 ${count} 个${rc.kindLabel}`, "info");
+}

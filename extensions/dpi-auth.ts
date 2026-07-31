@@ -39,6 +39,7 @@ import {
 } from "../src/config.ts";
 import type { RemoteKind } from "../src/config.ts";
 import { git, gitIn } from "../src/git.ts";
+import { errMsg } from "../src/common.ts";
 
 const run = promisify(execFile);
 
@@ -61,10 +62,6 @@ const KIND_LABEL: Record<RemoteKind, string> = {
   http: "通用 HTTPS（Gitea/GitLab/自托管）",
   local: "本地仓库",
 };
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,15 +95,11 @@ function expandTilde(p: string): string {
   return p.replace(/^~(?=\/|$)/, homedir());
 }
 
-/** GitHub 写法（user/repo、github.com/user/repo、https://…、git@github.com:…）归一化为 https://github.com/user/repo.git；无法识别返回 null */
+/** GitHub 写法（user/repo、github.com/user/repo、https://…）归一化为 https://github.com/user/repo.git；无法识别返回 null。git@github.com:… 由 parseRepoRemote 的 scp-like 分支先行判定为 ssh 类型，这里不再处理 */
 function normalizeGithubUrl(input: string): string | null {
   let s = input.trim().replace(/\/+$/, "");
-  if (s.toLowerCase().startsWith("git@github.com:")) {
-    s = s.slice("git@github.com:".length);
-  } else {
-    const m = /github\.com[/:]([^\s]+)$/i.exec(s);
-    if (m) s = m[1];
-  }
+  const m = /github\.com[/:]([^\s]+)$/i.exec(s);
+  if (m) s = m[1];
   s = s.replace(/\.git$/i, "").replace(/^\/+/, "");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(s)) return null;
   return `https://github.com/${s}.git`;
@@ -205,11 +198,12 @@ async function ensureRepo(
       ctx.ui.notify(`目标目录已存在且不是 git 仓库：${repoPath}`, "error");
       return null;
     }
-    // 已有本地仓库：重新指向 origin，跳过克隆
+    // 已有本地仓库：重新指向 origin 并 fetch 远端新状态，跳过克隆
     try {
       await gitIn(repoPath, ["remote", "set-url", "origin", repoUrl], gitOpts);
+      await gitIn(repoPath, ["fetch", "origin"], { ...gitOpts, timeoutMs: 60000 });
     } catch {
-      // 指向失败不阻断绑定
+      // 指向/fetch 失败不阻断绑定（内容校验用本地 agents/，远端同步由 /sync 负责）
     }
     ctx.ui.notify(`本地仓库已存在，跳过克隆：${repoPath}`, "info");
     try {

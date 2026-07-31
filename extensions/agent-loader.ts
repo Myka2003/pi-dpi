@@ -21,6 +21,7 @@ import {
   scanAgents,
   syncExtensionFilter,
 } from "../src/config.ts";
+import { safeAgentName } from "../src/common.ts";
 
 // ---------- 内容仓库路径（每次调用时从配置取，切换绑定即时生效） ----------
 
@@ -30,9 +31,7 @@ function repoPath(): string | null {
 }
 
 function currentAgent(): string {
-  const { currentAgent } = loadConfig();
-  // 配置文件可被手工编辑，防御路径穿越：agent 名只允许纯目录名
-  return /^[\w-]+$/.test(currentAgent) ? currentAgent : "coder";
+  return safeAgentName(loadConfig().currentAgent);
 }
 
 // ---------- agent 卡片（TUI 面板） ----------

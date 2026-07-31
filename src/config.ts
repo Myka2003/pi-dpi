@@ -344,7 +344,10 @@ export function syncExtensionFilter(cfg: DpiConfig): boolean {
     if (!cfg.repoUrl || !cfg.repoPath) return false;
     const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
     const declared = readAgentManifest(cfg.repoPath, agent).extensions;
-    const filter = declared.map((name) => `extensions/${name}.ts`);
+    // 只保留注册表中真实存在的扩展（与 agent-loader 卡片校验对称），避免脏路径进过滤器
+    const filter = declared
+      .filter((name) => existsSync(join(cfg.repoPath, "extensions", `${name}.ts`)))
+      .map((name) => `extensions/${name}.ts`);
 
     const raw = existsSync(settingsPath)
       ? (JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>)

@@ -2,7 +2,10 @@
  * session-vcs：会话落盘存档，按 agent 归档（移植自旧内容仓库 extensions/session-vcs.ts）。
  *
  * - session_shutdown：若 recordSessions 为 true，把 session JSONL 复制进
- *   内容仓库 sessions/<currentAgent>/ 目录（git 同步由 dpi-sync 负责）
+ *   内容仓库 sessions/<currentAgent>/ 目录，并立即 git add+commit（归档持久化
+ *   不依赖与 dpi-sync 的相对执行顺序——pi 的 session_shutdown 按扩展加载顺序
+ *   逐个 await，若 dpi-sync 先执行，本次归档要等下次启动才推；这里自提交后
+ *   最坏情况只是延迟一个同步周期，不会丢归档）。push 仍留给 dpi-sync。
  * - session_start：一次性迁移旧平铺档——把 <repo>/sessions/ 直属的 *.jsonl
  *   移入 sessions/_legacy/（renameSync，幂等；目录不存在跳过，单个失败容错继续）
  * - /record on|off|status：存档开关，写入 dpi 配置
@@ -30,6 +33,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
+import { gitIn } from "../src/git.ts";
 
 /**
  * 清理会话文件中的空 assistant 坏消息（content: []），有改动才写回。
@@ -107,8 +111,27 @@ function migrateLegacySessions(root: string): void {
   }
 }
 
+// 归档自提交：复制完成后立即 add+commit，保证归档不依赖 dpi-sync 的执行顺序
+async function commitArchive(repo: string): Promise<void> {
+  try {
+    await gitIn(repo, ["add", "-A"], { noAuth: true, timeoutMs: 8000 });
+    const { stdout } = await gitIn(repo, ["status", "--porcelain"], {
+      noAuth: true,
+      timeoutMs: 8000,
+    });
+    if (stdout.trim().length === 0) return; // 无改动不产生空提交
+    await gitIn(repo, ["commit", "-m", "[sync] archive session"], {
+      noAuth: true,
+      timeoutMs: 8000,
+    });
+  } catch {
+    // 归档提交失败静默（push 仍由 dpi-sync 负责）
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   // 会话结束时：先清理坏消息，再把干净版 JSONL 复制进仓库 sessions/<agent>/ 目录
+  // 并立即 commit（持久化不依赖扩展顺序）；push 由 dpi-sync 统一处理
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
       const file = ctx.sessionManager.getSessionFile();
@@ -120,6 +143,7 @@ export default function (pi: ExtensionAPI) {
       const dir = join(root, archiveAgentName());
       mkdirSync(dir, { recursive: true });
       copyFileSync(file, join(dir, basename(file)));
+      await commitArchive(loadConfig().repoPath); // git 操作在仓库根执行
     } catch {
       // 存档失败不阻断退出
     }

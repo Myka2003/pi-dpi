@@ -36,6 +36,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { loadConfig } from "../src/config.ts";
+import { errMsg } from "../src/common.ts";
 
 // 主列表末尾与子菜单的固定项
 const DONE_ITEM = "✓ 完成";
@@ -57,10 +58,6 @@ interface ArchivedSession {
   sortKey: number; // 排序键：最后 user/assistant 消息时间戳（ms），回退 header.timestamp
   dayLabel: string; // header.timestamp 的 YYYY-MM-DD（标题/通知的日期回退）
   partial: boolean; // >2MB 只解析了头部：按文件名展示、不计数
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 /** 消息 content 取首段文本：字符串直取，数组找第一个 {type:"text",text} */
@@ -265,6 +262,9 @@ async function restoreArchived(
         // 首行损坏/取 cwd 失败：原样写入
       }
       writeFileSync(dest, out, "utf-8");
+    } else {
+      // 本机已有同名文件：不覆盖，直接切换（提示避免误以为恢复了远端版本）
+      ctx.ui.notify(`本机已存在同名会话 ${s.fileName}，将直接切换（不是远端版本）`, "warning");
     }
     // 目标已存在同名文件：跳过复制，直接切换
   } catch (e) {

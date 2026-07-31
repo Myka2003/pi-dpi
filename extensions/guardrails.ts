@@ -8,7 +8,8 @@
 import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const BLOCKED_PATTERNS = [/rm\s+-rf\s+\/(?:\s|$)/, /\bsudo\b/, /\bmkfs\b/];
-const PROTECTED_PATHS = [".env", "node_modules/", ".git/"];
+// 保护路径按路径段精确匹配（.env 整个文件、node_modules/.git 目录段），避免子串误伤如 my.env.bak
+const PROTECTED_PATHS = [/(^|\/)node_modules\//, /(^|\/)\.git\//, /(^|\/)\.env$/];
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
@@ -24,7 +25,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
-      if (PROTECTED_PATHS.some((p) => event.input.path.includes(p))) {
+      if (PROTECTED_PATHS.some((p) => p.test(event.input.path))) {
         return { block: true, reason: `受保护路径: ${event.input.path}` };
       }
     }
