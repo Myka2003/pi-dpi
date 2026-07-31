@@ -1,0 +1,13 @@
+{
+  "name": "my-agent-world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "My dpi content repo: agents + skills registry + extensions registry",
+  "keywords": ["pi-package", "dpi-content-pack"],
+  "license": "MIT",
+  "pi": {
+    "prompts": ["agents/*/prompts"],
+    "themes": ["themes"],
+    "extensions": ["extensions"]
+  }
+}
