@@ -104,6 +104,26 @@ export class SessionPicker implements Component {
     }
   }
 
+  /** 半页移动（vim ^D/^U） */
+  private moveHalf(down: boolean): void {
+    const v = this.visible();
+    if (v.length === 0) return;
+    const step = Math.max(1, Math.floor(PAGE_SIZE / 2));
+    for (let i = 0; i < step; i++) down ? this.moveDown() : this.moveUp();
+  }
+
+  /** 整页移动（vim ^F/^B，等价 PgDn/PgUp） */
+  private movePage(down: boolean): void {
+    const v = this.visible();
+    if (v.length === 0) return;
+    if (down) {
+      if (this.pageOffset + PAGE_SIZE < v.length) this.pageOffset += PAGE_SIZE;
+    } else {
+      this.pageOffset = Math.max(0, this.pageOffset - PAGE_SIZE);
+    }
+    this.sel = Math.min(this.sel, this.page().length - 1);
+  }
+
   /** 跳到第一页第一项 / 最后一页最后一项（gg / G） */
   private jump(first: boolean): void {
     const v = this.visible();
@@ -148,6 +168,10 @@ export class SessionPicker implements Component {
     if (matchesKey(data, Key.up) || data === "k") return this.moveUp();
     if (matchesKey(data, Key.pageDown) || data === " ") return this.moveDown();
     if (matchesKey(data, Key.pageUp)) return this.moveUp();
+    if (matchesKey(data, Key.ctrl("d"))) return this.moveHalf(true);
+    if (matchesKey(data, Key.ctrl("u"))) return this.moveHalf(false);
+    if (matchesKey(data, Key.ctrl("f"))) return this.movePage(true);
+    if (matchesKey(data, Key.ctrl("b"))) return this.movePage(false);
     if (data === "g") {
       // gg：连按两次 g 回首页
       if (this.lastKey === "g") {
@@ -211,7 +235,7 @@ export class SessionPicker implements Component {
     const hints =
       this.mode === "search"
         ? "过滤输入中… Enter 确认 · Esc 清空退出"
-        : "j/k 导航 · gg 首页 · G 末页 · PgUp/PgDn 翻页 · / 过滤 · c 筛选 · Enter 选择 · Esc 取消";
+        : "j/k 导航 · ^D/^U 半页 · ^F/^B 整页 · gg/G · / 过滤 · c 筛选 · Enter 选择 · Esc 取消";
     lines.push(t.fg("dim", hints.slice(0, width)));
     return lines;
   }
