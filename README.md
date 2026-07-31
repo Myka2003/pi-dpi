@@ -1,157 +1,161 @@
-# pi-dpi — dπ：拆解 π
+# pi-dpi — dπ: Decouple & Distribute π
 
-> English: [README.en.md](README.en.md) | 中文: 本文件
+**dπ = 拆解 π = decouple & distribute.** pi-dpi is an extension plugin for the pi coding
+agent (pure engine, no agent content): it splits the "agent world" — personas, skills,
+prompts, session archives — out of the pi package into an independent **content repository**
+(your own git repo). pi-dpi only binds, loads, and syncs it. Engine and content are
+decoupled: engine upgrades don't touch content, content iteration doesn't touch the
+engine, and the same content repo can be distributed across machines and team members.
 
-**dπ = 拆解 π = 解耦分发。** pi-dpi 是 pi coding agent 的一个扩展插件（纯引擎，不含任何
-agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、技能、提示词、会话存档
-全部放进一个独立的**内容仓库**（你自己的 git 仓库），pi-dpi 只负责绑定、加载与同步。
-引擎与内容解耦：引擎升级不动内容，内容迭代不动引擎，同一份内容仓库可以在多台机器、
-多个团队成员之间分发。
+> 中文: [README.zh.md](README.zh.md) | English: this file
 
-## 安装
+## Install
 
 ```bash
 pi install git:github.com/oc101363-creator/pi-dpi
 ```
 
-## 使用：`/dpi-agent-login`
+## Getting Started: `/dpi-agent-login`
 
-安装后第一次使用，在 pi 中执行：
+After installing, run in pi:
 
 ```
 /dpi-agent-login
 ```
 
-完整流程：
+Full flow:
 
-1. **仓库地址**：直接 `/dpi-agent-login <地址>` 或交互输入。地址格式自动决定远端类型
-   （见下方「远端类型矩阵」）：GitHub 写法（`user/repo`、`github.com/user/repo`、
-   `https://…`）归一化为 `https://github.com/user/repo.git`；`git@…`/`ssh://…`
-   走 SSH、`https://<自托管>/…` 走通用 HTTPS、本地路径/`file://` 走本地协议，
-   地址均按原样使用。
-2. **代理选择**（仅 GitHub / 通用 HTTPS）：`不需要代理 / 使用 127.0.0.1:7890 / 自定义输入`。
-3. **认证**：GitHub 走设备授权——终端显示 `user_code` 与验证地址，浏览器打开
-   <https://github.com/login/device> 输入代码完成授权（OAuth device flow）；
-   通用 HTTPS 改为交互输入「用户名 + 访问令牌/密码」；SSH 与本地仓库零凭证。
-4. **克隆内容仓库**：认证通过后自动 `git clone` 到
-   `~/.pi/agent/dpi/repo`（token 不落 remote URL，走一次性 credential helper）。
-   克隆后会校验 `agents/*/SYSTEM.md` 存在——不是 dpi 内容仓库会响亮报错且不写配置。
-5. **声明式注册**：把内容仓库的本地路径写进 `settings.json` 的 `packages`——
-   内容仓库本身是标准 pi 包（`package.json` 里 `pi` 清单声明 prompts/themes），
-   提示词与主题由 pi 原生加载。
-6. **技能按声明发现**：引擎在 `resources_discover` 时读取**当前 agent** 的
-   `agent.json`，只把声明的技能（仓库根 `skills/` 注册表条目）返回给 pi——
-   未声明的技能不进会话，这是 dpi 的技能隔离机制。
-7. **立即生效**：自动 `/reload`，agent 卡片、技能、提示词即刻可用。
+1. **Repo address**: pass `/dpi-agent-login <address>` or answer interactively. The address
+   format determines the remote type automatically (see "Remote Type Matrix" below):
+   GitHub forms (`user/repo`, `github.com/user/repo`, `https://…`) normalize to
+   `https://github.com/user/repo.git`; `git@…`/`ssh://…` use SSH; `https://<self-hosted>/…`
+   uses generic HTTPS; local paths/`file://` use the local protocol.
+2. **Proxy selection** (GitHub / generic HTTPS only): no proxy / `127.0.0.1:7890` / custom.
+3. **Auth**: GitHub uses device flow — the terminal shows a `user_code` and verification
+   URL; open <https://github.com/login/device> and enter the code. Generic HTTPS prompts for
+   username + token. SSH and local repos need no credentials.
+4. **Clone**: the content repo is cloned to `~/.pi/agent/dpi/repo` (token never lands in the
+   remote URL; a one-shot credential helper is used). Clones are validated for
+   `agents/*/SYSTEM.md` — a non-dpi repo errors loudly and writes no config.
+5. **Declarative registration**: the local path is written into `settings.json` `packages` —
+   the content repo itself is a standard pi package (prompts/themes loaded natively).
+6. **Skills by declaration**: the engine reads the current agent's `agent.json` on
+   `resources_discover` and returns only declared skills (from the repo-root `skills/`
+   registry) — undeclared skills never enter a session. This is dpi's skill isolation.
+7. **Instant effect**: auto `/reload` — agent card, skills, prompts available immediately.
 
-### 远端类型矩阵
+No repo yet? Bind a local path (`/dpi-agent-login ~/srv/agents`) — pi-dpi bootstraps a
+minimal content repo for you. Or fork the starter template:
+<https://github.com/oc101363-creator/pi-dpi/tree/main/templates/content-repo>.
 
-`/dpi-agent-login` 根据地址格式自动识别远端类型，无需手动选择：
+### Remote Type Matrix
 
-| 地址写法 | 类型 | 认证方式 |
+| Address form | Type | Auth |
 | --- | --- | --- |
-| `user/repo`、`github.com/user/repo`、`https://github.com/user/repo(.git)` | GitHub | OAuth device flow，token 单行存本机 |
-| `git@host:path`、`user@host:path`、`ssh://…`（含 `git@github.com:…`） | SSH 远端 | 零凭证，用本机 ssh key（绑定前先 `ls-remote` 探测） |
-| `https://<非 GitHub 托管>/…`、`http://…` | 通用 HTTPS | 交互输入用户名 + 访问令牌/密码，token 文件存两行（用户名 + 令牌） |
-| `/abs/path`、`~/path`、`file://…` | 本地仓库 | 零认证，走 git 本地协议（`~` 自动展开） |
+| `user/repo`, `github.com/user/repo`, `https://github.com/user/repo(.git)` | GitHub | OAuth device flow, token stored locally (0600) |
+| `git@host:path`, `user@host:path`, `ssh://…` (incl. `git@github.com:…`) | SSH | Zero credential, local ssh key |
+| `https://<non-GitHub>/…`, `http://…` | Generic HTTPS | Interactive username + token (two-line token file) |
+| `/abs/path`, `~/path`, `file://…` | Local | Zero credential, local git protocol |
 
-配置示例：
+Examples:
 
 ```
-/dpi-agent-login git@git.example.com:user/agents.git        # SSH 远端
-/dpi-agent-login https://gitea.example.com/user/agents.git  # 通用 HTTPS
-/dpi-agent-login ~/srv/agents.git                           # 本地仓库
+/dpi-agent-login git@git.example.com:user/agents.git        # SSH remote
+/dpi-agent-login https://gitea.example.com/user/agents.git  # generic HTTPS
+/dpi-agent-login ~/srv/agents.git                           # local repo (bootstraps if empty)
 ```
 
-SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLab / Codeberg
-等任意 git 托管。自动同步对四类远端一视同仁：SSH/本地不注入 credential helper、
-不走 HTTP 代理；GitHub/通用 HTTPS 维持 token + 按需代理。
+### Commands
 
-其它命令：
-
-| 命令 | 作用 |
+| Command | Purpose |
 | --- | --- |
-| `/dpi-agent-login [仓库地址]` | 绑定/重新绑定内容仓库 |
-| `/dpi-agent-logout` | 清除本机 token（本地仓库与配置保留） |
-| `/dpi-agent [名字]` | 查看/切换当前 agent |
-| `/dpi-skills` | 管理当前 agent 的技能组合：勾选/取消、删除注册表技能 |
-| `/dpi-extensions` | 管理当前 agent 的扩展组合：勾选/取消、删除注册表扩展 |
-| `/dpi-sync` | 手动同步内容仓库（pull --rebase → 清扫提交 → push） |
-| `/dpi-record on\|off\|status` | 会话存档开关 |
-| `/dpi-sessions` | 浏览仓库存档会话，一键恢复到本机并切换 |
-| `/dpi-session-repair` | 手动清理当前会话文件中的坏消息（重进会话生效） |
-| `/dpi-save-status` | 查看保存状态：最近归档/推送、未推送提交数 |
+| `/dpi-agent-login [repo]` | Bind / rebind the content repo |
+| `/dpi-agent-logout` | Clear the local token (repo and config kept) |
+| `/dpi-agent [name]` | View / switch current agent |
+| `/dpi-skills` | Manage current agent's skill set (toggle/delete registry skills) |
+| `/dpi-extensions` | Manage current agent's extensions (toggle/delete registry extensions) |
+| `/dpi-sync` | Manual sync: pull --rebase → sweep commit → push (reloads on declaration change) |
+| `/dpi-record on\|off\|status` | Session archive toggle |
+| `/dpi-sessions` | Browse archived sessions (vim nav: j/k, gg/G, / filter), restore/rename/delete |
+| `/dpi-session-repair` | Clean bad messages in the current session file (takes effect on re-entry) |
+| `/dpi-save-status` | Show save status: last archive/push, unpushed commits |
 
+Auto-sync: on session start/reload/new/resume pi pulls `--rebase --autostash` and sweeps a
+commit, pushes on exit; all silent and fault-tolerant. A 3s remote watch detects GitHub-side
+changes to `agent.json` and pulls automatically — the agent card and `[Sync]` status refresh
+live without reload.
 
-自动同步：pi 启动时 `pull --rebase --autostash` + 清扫推送，退出时再清扫推送一次；
-全部静默容错，失败（断网/冲突）不影响 pi 启动。
+Session self-healing: gateway 400/429 failures or user aborts can write empty assistant
+messages into the session file, killing the session. The engine cleans them on exit and on
+session switch; `/dpi-session-repair` fixes manually.
 
-会话自愈：网关 400/429 失败或用户中断会把空 assistant 消息写进会话文件，此后每轮
-请求都被协议拒绝、会话"死亡"。引擎在退出时（归档前）与切换会话时自动清理坏消息，
-归档进仓库的永远是干净版；日常无感，中招时也可 `/dpi-session-repair` 手动修复。
+## Content Repository Structure
 
-## 内容仓库结构约定
-
-内容仓库就是一个普通 git 仓库（**务必保持 Private**——会话存档都在里面）：
+A content repo is an ordinary git repo (**keep it Private** — session archives live in it):
 
 ```
-<内容仓库>/
-├── agents/                 # 多 agent 平行世界，一个目录一个完整人格
+<content-repo>/
+├── agents/                 # Multi-agent worlds: one directory per persona
 │   └── <name>/
-│       ├── SYSTEM.md       # 人格定义（每轮对话注入系统提示词）
-│       ├── agent.json      # 能力组合声明：{ "description": "…", "skills": […], "extensions": […] }
-│       └── prompts/        # 该 agent 专属提示词模板（xxx.md → /xxx）
-├── skills/                 # 技能注册表：平铺的技能库（<skill>/SKILL.md），
-│                           #   不直接属于任何 agent，由 agent.json 按名组合
-├── extensions/             # 扩展注册表：平铺的扩展库（<name>.ts），
-│                           #   不直接属于任何 agent，由 agent.json 按名组合
-├── machines/               # 机器层配置：<hostname>.json 覆写白名单字段
-│                           #   （proxy、recordSessions），随仓库同步，新机器自动获配
-├── sessions/<agent>/       # 会话存档按 agent 归档（_legacy/ 为旧平铺档迁移区）
-├── docs/plans|specs/       # 工作流文档：大改先 spec（设计）后 plan（执行计划）
-└── themes/                 # 可选，pi 主题
+│       ├── SYSTEM.md       # Persona (injected into system prompt every turn)
+│       ├── agent.json      # Capability declaration: { description, skills, extensions }
+│       └── prompts/        # Agent prompt templates (xxx.md → /xxx)
+├── skills/                 # Skill registry: flat <name>/SKILL.md entries
+├── extensions/             # Extension registry: flat <name>.ts or <name>/index.ts dirs
+├── machines/               # Per-machine overrides: <hostname>.json (proxy, recordSessions)
+├── sessions/<agent>/       # Session archives by agent (_legacy/ holds old flat archives)
+├── docs/plans|specs/       # Workflow docs: spec (design) then plan (execution)
+└── themes/                 # Optional pi themes
 ```
 
-新增 agent = 新增 `agents/<name>/{SYSTEM.md,agent.json}` + 在 `skills/` 注册表挑技能
-填进 `skills` 数组，无需改任何代码。新增技能 = 在 `skills/` 下加一个目录，然后由需要的
-agent 在各自的 `agent.json` 里声明。日常增删技能、调整组合不需要手编文件，用 `/dpi-skills`
-交互完成（勾选/取消即写回 `agent.json`，也可删除注册表技能）。扩展同理：新增扩展 =
-在 `extensions/` 下加一个 `.ts` 文件，由需要的 agent 在 `agent.json` 的 `extensions`
-数组里声明，日常管理用 `/dpi-extensions` 交互完成。
+New agent = add `agents/<name>/{SYSTEM.md, agent.json}` + declare skills/extensions in
+`agent.json` — no engine changes. New skill = add `skills/<name>/SKILL.md`, then enable via
+`/dpi-skills` (writes back to agent.json). Same for extensions: add
+`extensions/<name>.ts` (or a directory with `index.ts`), enable via `/dpi-extensions`.
 
-## per-agent 扩展
+### Extension = self-contained unit
 
-内容仓库根 `extensions/` 是平铺的扩展注册表（一个 `.ts` 文件一个扩展），不直接属于
-任何 agent。机制一句话：**切换 agent 时引擎把内容包 settings 条目的 `extensions`
-过滤器改写为当前 agent 声明的白名单，过滤发生在 import 之前 = 真隔离**（未声明的
-扩展文件根本不会被 jiti 执行）；代价是切换即全量 `reload`。启动时引擎还会自动对齐
-一次过滤器（启动自愈），`agent.json` 被外部编辑或 `/dpi-sync` 拉取后，下一次重载即收敛。
+An extension can bundle its own skills at `extensions/<name>/skills/` — declaring the
+extension makes its skills available automatically (no registry copying). Vendor community
+packages by copying the package into `extensions/<name>/` and merging its `dependencies`
+into the content repo's `package.json` (auto `npm install` on first load). Deleting an
+extension cascades to its same-name bundled skill.
 
-## superpowers 支持
+## per-agent extensions
 
-[superpowers](https://github.com/obra/superpowers) 自 v0.5.0 起作为内容仓库
-`extensions/` 注册表中的普通扩展，经 `agent.json` 声明 + settings 白名单按 agent
-加载（引擎内置注入器已退役）。
+The content repo's `extensions/` is a flat registry; the engine rewrites the content
+package's `extensions` filter in `settings.json` to the current agent's declared whitelist.
+Filtering happens before jiti import — undeclared extension files never execute (real
+isolation); switching agents triggers a full reload.
 
-## 机器层配置（machines/）
+## superpowers support
 
-引擎加载配置时，会在全局 `config.json` 之上叠加内容仓库的
-`machines/<hostname>.json`（hostname 归一化为小写 `[a-z0-9-]`，如
-`MacBook-Air → macbook-air`）。白名单字段：`proxy`、`recordSessions`——机器相关的
-设置随仓库同步，换新机器时写一次机器文件即自动获配，无需逐台重设。
+[superpowers](https://github.com/obra/superpowers) ships as an ordinary extension in the
+content registry, loaded per agent via `agent.json` declaration + settings whitelist.
 
-## 配置与数据位置
+## Machine-level config (machines/)
 
-全部存于 `~/.pi/agent/dpi/`（目录 0700）：
+The engine overlays `machines/<hostname>.json` (normalized lowercase `[a-z0-9-]`) on top of
+the global config. Whitelisted fields: `proxy`, `recordSessions` — machine-specific settings
+travel with the repo, new machines get them automatically.
 
-- `config.json`：repoUrl / remoteKind / repoPath / branch / proxy / currentAgent / recordSessions
-- `token`：访问令牌（0600；GitHub 为单行，通用 HTTPS 为「用户名 + 令牌」两行，SSH/本地仓库无此文件）
-- `repo/`：内容仓库本地克隆
+## Config & data locations
 
-若设置了 `PI_CODING_AGENT_DIR` 环境变量，则以 `$PI_CODING_AGENT_DIR/dpi/` 替代。
+All stored under `~/.pi/agent/dpi/` (0700):
 
-## ⚠️ 隐私提醒
+- `config.json`: repoUrl / remoteKind / repoPath / branch / proxy / currentAgent / recordSessions
+- `token`: access token (0600; single line for GitHub, two lines username+token for generic HTTPS)
+- `repo/`: local clone of the content repo
 
-- 内容仓库必须保持 **Private**。会话存档都在仓库里，仓库公开等于公开你的
-  聊天记录。
-- token 仅以 0600 权限存于本机 `~/.pi/agent/dpi/token`，绝不写进 remote URL 或任何配置。
+Set `PI_CODING_AGENT_DIR` to override the agent dir.
+
+## ⚠️ Privacy
+
+- The content repo must stay **Private**. Session archives live in the repo — public repo
+  means public chat history.
+- The token is stored only at `~/.pi/agent/dpi/token` (0600), never in remote URLs or config.
+
+## Development
+
+- `npm run typecheck` / `npm run test` — must be green before committing
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
