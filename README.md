@@ -9,8 +9,6 @@ engine, and the same content repo can be distributed across machines and team me
 
 > 中文: [README.zh.md](README.zh.md) | English: this file
 
-![Uploading image.png…]()
-
 ## Install
 
 ```bash
