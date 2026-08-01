@@ -327,3 +327,67 @@ export function stripTrailingNonMessage(text: string): string {
   }
   return lines.join("\n") + "\n";
 }
+
+/** 恢复健壮化：一次扫描移除会导致 pi 加载/API 拒绝的结构（不改归档）：
+ * 1. 孤儿 toolResult（compaction 摘要压掉前置 tool_calls 的消息——API 要求
+ *    tool 消息必须在 tool_calls 之后，孤儿会 400 拒绝）
+ * 2. 坏行（JSON 解析失败）
+ * 3. 尾部非 message entry（pi 以最后一条为树叶子，元数据尾会导致空上下文）
+ * 名字在 session-index 不丢；header 在第一行不受影响。 */
+export function sanitizeSessionForRestore(text: string): string {
+  const lines = text.split("\n").filter((l) => l.trim());
+  const kept: string[] = [];
+  const pendingToolCalls = new Set<string>();
+  let lastRole = ""; // 上一条消息 role（连续 toolResult 检测）
+  for (const line of lines) {
+    let rec: Record<string, unknown>;
+    try {
+      rec = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue; // 坏行丢弃（pi 加载也会跳过）
+    }
+    // compaction 摘要：pi 按压缩段落构建上下文——段落之前的 tool_calls
+    // 不在摘要后的上下文里，重置配对（段落内的 toolResult 独立配对）
+    if (rec.type === "compaction") {
+      pendingToolCalls.clear();
+      kept.push(line);
+      continue;
+    }
+    const msg = (rec.message ?? null) as Record<string, unknown> | null;
+    const role = msg?.role;
+    const content = msg?.content;
+    if (role === "assistant" && Array.isArray(content)) {
+      for (const part of content) {
+        const pc = part as Record<string, unknown> | null;
+        if (pc && pc.type === "toolCall" && typeof pc.id === "string") {
+          pendingToolCalls.add(pc.id);
+        }
+      }
+    }
+    if (role === "toolResult") {
+      // 连续 toolResult：API 要求 tool 消息紧跟 tool_calls，连续会 400——丢后一个
+      if (lastRole === "toolResult") continue;
+      const callId = (msg as { toolCallId?: unknown }).toolCallId;
+      if (typeof callId === "string" && pendingToolCalls.has(callId)) {
+        kept.push(line);
+        pendingToolCalls.delete(callId);
+      }
+      // 孤儿 toolResult：丢弃（前置 tool_calls 已被 compaction 摘要压掉）
+      lastRole = "toolResult";
+      continue;
+    }
+    kept.push(line);
+    if (typeof role === "string") lastRole = role;
+  }
+  // 尾部非 message（pi 树叶子）
+  while (kept.length > 0) {
+    try {
+      const last = JSON.parse(kept[kept.length - 1]) as Record<string, unknown>;
+      if (last.type === "message") break;
+    } catch {
+      break;
+    }
+    kept.pop();
+  }
+  return kept.join("\n") + "\n";
+}

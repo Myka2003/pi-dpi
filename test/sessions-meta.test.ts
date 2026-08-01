@@ -90,3 +90,36 @@ describe("stripTrailingNonMessage", () => {
     expect(out.endsWith('"content":"hi"}}\n')).toBe(true);
   });
 });
+
+describe("sanitizeSessionForRestore", () => {
+  it("drops orphan toolResult (no preceding tool_calls)", async () => {
+    const { sanitizeSessionForRestore } = await import("../src/sessions-shared.ts");
+    const text = [
+      '{"type":"session","id":"x"}',
+      '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1"}]}}',
+      '{"type":"message","message":{"role":"toolResult","toolCallId":"t1"}}',
+      '{"type":"message","message":{"role":"toolResult","toolCallId":"t9"}}', // 孤儿
+      '{"type":"message","message":{"role":"assistant","content":"ok"}}',
+    ].join("\n") + "\n";
+    const out = sanitizeSessionForRestore(text);
+    expect(out).toContain('"toolCallId":"t1"');
+    expect(out).not.toContain('"toolCallId":"t9"'); // 孤儿被移除
+    expect(out).toContain('"content":"ok"');
+  });
+  it("keeps normal toolResult paired with tool_calls", async () => {
+    const { sanitizeSessionForRestore } = await import("../src/sessions-shared.ts");
+    const text = [
+      '{"type":"session","id":"x"}',
+      '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"a"}]}}',
+      '{"type":"message","message":{"role":"toolResult","toolCallId":"a"}}',
+    ].join("\n") + "\n";
+    expect(sanitizeSessionForRestore(text)).toContain('"toolCallId":"a"');
+  });
+  it("still strips trailing non-message", async () => {
+    const { sanitizeSessionForRestore } = await import("../src/sessions-shared.ts");
+    const text = '{"type":"session","id":"x"}\n{"type":"message","message":{"role":"user","content":"hi"}}\n{"type":"session_info","name":"n"}\n';
+    const out = sanitizeSessionForRestore(text);
+    expect(out).not.toContain("session_info");
+    expect(out.endsWith('"content":"hi"}}\n')).toBe(true);
+  });
+});
