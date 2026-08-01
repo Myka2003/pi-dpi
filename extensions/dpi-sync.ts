@@ -20,6 +20,7 @@ import {
   formatSyncStatus,
   pendingCommits,
   readSaveState,
+  remoteSyncLine,
   remoteSyncState,
   writeSaveState,
 } from "../src/save-state.ts";
@@ -252,6 +253,7 @@ export default function (pi: ExtensionAPI) {
       const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
       const lines = [
         formatSyncStatus(state, pending),
+        remoteSyncLine(),
         state.lastArchive
           ? `Last archive: ${state.lastArchive.time.slice(0, 19).replace("T", " ")} ${state.lastArchive.session} (${state.lastArchive.result === "committed" ? "committed" : "copied"})`
           : "Last archive: none",

@@ -32,7 +32,6 @@ import {
   formatSyncStatus,
   pendingCommits,
   readSaveState,
-  remoteSyncLine,
   syncStatusShort,
 } from "../src/save-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
@@ -146,7 +145,7 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));
-    sections.push(section("Sync", `${syncCache.text}\n  ${remoteSyncLine()}${syncCache.detail ? `\n  ${syncCache.detail}` : ""}`));
+    // 保存状态不占卡片空间：底栏 sync: ✓ 实时 + /dpi-save-status 完整详情
     return new Text(sections.join("\n\n"), 0, 0);
   });
   ctx.ui.setStatus("agent-world", `${ANSI.dim}agent: ${agent}${ANSI.reset}`);
