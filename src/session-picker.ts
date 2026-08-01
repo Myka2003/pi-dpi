@@ -28,6 +28,12 @@ export function showSessionPicker(
     .map((s) => ({
       id: s.fileName, // 文件名唯一，作稳定 id
       label: s.name ? `[${s.agent}] ${s.name} · ${s.fileName}` : `[${s.agent}] ${s.fileName}`,
+      meta:
+        s.size > 0
+          ? s.size >= 1024 * 1024
+            ? `${(s.size / 1024 / 1024).toFixed(1)}MB`
+            : `${Math.max(1, Math.round(s.size / 1024))}KB`
+          : undefined,
       data: s,
     }));
 

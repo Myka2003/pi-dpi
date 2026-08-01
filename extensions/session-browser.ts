@@ -228,7 +228,19 @@ export default function (pi: ExtensionAPI) {
 
       // 列表本地化：3 秒监听已后台维护 origin/main（最多滞后 3 秒），
       // 打开不再同步 fetch——ls-tree + 名字索引全本地，毫秒级显示
-      const archived = await scanArchivedMeta(repo);
+      let archived = await scanArchivedMeta(repo);
+      // 当前会话置顶：正在进行的会话排最前（方便快速找到自己）
+      try {
+        const cur = (ctx.sessionManager.getSessionFile() ?? "").split("/").pop() ?? "";
+        if (cur) {
+          archived = [
+            ...archived.filter((x) => x.fileName === cur),
+            ...archived.filter((x) => x.fileName !== cur),
+          ];
+        }
+      } catch {
+        // 置顶失败不影响列表
+      }
       if (archived.length === 0) {
         ctx.ui.notify("No archived sessions yet (/dpi-record on archives on exit)", "info");
         return;

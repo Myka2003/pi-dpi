@@ -262,6 +262,7 @@ export interface ArchivedMeta {
   sortKey: number;
   dayLabel: string;
   name: string; // 来自 session-index（多机器同步的名字），无则 ""
+  size: number; // 来自 session-index（归档时记录），0 = 未知
 }
 
 /** 文件名时间戳：2026-08-01T00-00-00-000Z_<uuid>.jsonl → Date.parse（连字符代替冒号） */
@@ -293,6 +294,7 @@ export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
         sortKey,
         dayLabel,
         name: index[e.path]?.name ?? "",
+        size: index[e.path]?.size ?? 0,
       });
     }
     return out.sort((a, b) => b.sortKey - a.sortKey);

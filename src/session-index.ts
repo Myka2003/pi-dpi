@@ -16,6 +16,8 @@ import { join } from "node:path";
 
 export interface SessionIndexEntry {
   name: string;
+  /** 归档文件大小（字节）——归档时记录，列表直接显示，无需拉 blob */
+  size?: number;
 }
 
 export type SessionIndex = Record<string, SessionIndexEntry>;
@@ -51,9 +53,21 @@ export function writeSessionIndex(repo: string, index: SessionIndex): void {
 export function setSessionNameInIndex(repo: string, path: string, name: string): void {
   const index = readSessionIndex(repo);
   if (name) {
-    index[path] = { name };
+    index[path] = { ...(index[path] ?? {}), name };
   } else {
     delete index[path];
+  }
+  writeSessionIndex(repo, index);
+}
+
+/** 记录归档文件大小（归档时调用；列表显示用，本地 statSync 零成本） */
+export function setSessionSizeInIndex(repo: string, path: string, size: number): void {
+  const index = readSessionIndex(repo);
+  const prev = index[path];
+  if (prev) {
+    index[path] = { ...prev, size };
+  } else {
+    index[path] = { name: "", size };
   }
   writeSessionIndex(repo, index);
 }

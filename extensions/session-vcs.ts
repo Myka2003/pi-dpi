@@ -36,7 +36,7 @@ import { basename, join } from "node:path";
 import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { readSaveState, writeSaveState } from "../src/save-state.ts";
-import { setSessionNameInIndex } from "../src/session-index.ts";
+import { setSessionNameInIndex, setSessionSizeInIndex } from "../src/session-index.ts";
 import { errMsg } from "../src/common.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
@@ -187,6 +187,7 @@ export default function (pi: ExtensionAPI) {
         timeoutMs: 8000,
       });
       if (opts.name) setSessionNameInIndex(cfg.repoPath, relPath, opts.name); // 名字索引同步
+      setSessionSizeInIndex(cfg.repoPath, relPath, st.size); // 大小索引（列表显示）
       // force 但内容无变化（无名字）：已是最新，无需 commit/push
       if (opts.force && !opts.name) {
         try {
