@@ -30,6 +30,7 @@ import {
   scanArchivedMeta,
   type ArchivedMeta,
 } from "../src/sessions-shared.ts";
+import { removeSessionFromIndex, setSessionNameInIndex } from "../src/session-index.ts";
 import { showSessionPicker } from "../src/session-picker.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
@@ -126,6 +127,8 @@ async function renameArchived(
     writeFileSync(tmp, updated, "utf-8");
     const blob = await gitHashObject(repo, tmp, gitOpts());
     await gitUpdateIndexCacheInfo(repo, s.path, blob, gitOpts());
+    setSessionNameInIndex(repo, s.path, name); // 索引同步（随 git 跨机器）
+    await gitIn(repo, ["add", "session-index.json"], gitOpts());
     await gitIn(repo, ["commit", "-m", `rename session ${s.fileName}`], gitOpts());
     // 推送（带认证；失败静默，下次同步补）
     try {
@@ -168,6 +171,8 @@ async function deleteArchived(
   const repo = loadConfig().repoPath;
   try {
     await gitIndexRemove(repo, s.path, gitOpts());
+    removeSessionFromIndex(repo, s.path); // 索引同步（随 git 跨机器）
+    await gitIn(repo, ["add", "session-index.json"], gitOpts());
     await gitIn(repo, ["commit", "-m", `delete session ${s.fileName}`], gitOpts());
     try {
       await gitIn(repo, ["push"], gitPushOpts());
@@ -229,8 +234,16 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
         if (!picked) return; // 取消/完成
-        // 懒加载名字（拉单个 blob 解析 session_info）——失败回退文件名
-        const name = (await fetchArchivedName(repo, picked.path)) || picked.fileName;
+        // 名字：索引有直接用；索引没有才懒加载（拉 blob 解析）并写回索引
+        let name = picked.name;
+        if (!name) {
+          const fetched = await fetchArchivedName(repo, picked.path);
+          if (fetched) {
+            name = fetched;
+            setSessionNameInIndex(repo, picked.path, fetched); // 写回索引（后续列表直接显示）
+          }
+        }
+        name = name || picked.fileName;
         const action = await ctx.ui.select(`Session — ${name}`, [
           RESTORE_ITEM,
           RENAME_ITEM,

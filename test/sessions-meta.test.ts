@@ -57,3 +57,15 @@ describe("fetchArchivedName", () => {
     expect(name).toBe("");
   });
 });
+
+describe("session-index", () => {
+  it("setSessionNameInIndex writes and readSessionIndex reads back", async () => {
+    const { setSessionNameInIndex, readSessionIndex, removeSessionFromIndex } =
+      await import("../src/session-index.ts");
+    const p = "sessions/coder/2026-08-01T00-00-00-000Z_a.jsonl";
+    setSessionNameInIndex(repo, p, "OpenSCAD");
+    expect(readSessionIndex(repo)[p]?.name).toBe("OpenSCAD");
+    removeSessionFromIndex(repo, p);
+    expect(readSessionIndex(repo)[p]).toBeUndefined();
+  });
+});

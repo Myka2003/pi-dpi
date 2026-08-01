@@ -234,6 +234,7 @@ export function entryLabel(s: ArchivedSession): string {
 // ---------- 稀疏存储模型：git 元数据扫描 + 名字懒加载 ----------
 
 import { gitLsTree, gitShow } from "./git.ts";
+import { readSessionIndex } from "./session-index.ts";
 
 /** 从 JSONL 文本解析最新 session_info 名字（流式覆盖取最后一条） */
 export function parseNameFromText(text: string): string {
@@ -259,6 +260,7 @@ export interface ArchivedMeta {
   fileName: string;
   sortKey: number;
   dayLabel: string;
+  name: string; // 来自 session-index（多机器同步的名字），无则 ""
 }
 
 /** 文件名时间戳：2026-08-01T00-00-00-000Z_<uuid>.jsonl → Date.parse（连字符代替冒号） */
@@ -270,19 +272,27 @@ function metaFromFileName(fileName: string): { sortKey: number; dayLabel: string
   return { sortKey: Number.isNaN(ts) ? 0 : ts, dayLabel: m[1].slice(0, 10) };
 }
 
-/** 从 git 元数据列归档（不下载内容；sessions/ 不在工作区） */
+/** 从 git 元数据列归档（不下载内容；sessions/ 不在工作区）；名字来自 session-index */
 export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
   try {
     const entries = await gitLsTree(repo, "origin/main", "sessions", {
       noAuth: true,
       timeoutMs: 8000,
     });
+    const index = readSessionIndex(repo);
     const out: ArchivedMeta[] = [];
     for (const e of entries) {
       const m = /^sessions\/([^/]+)\/([^/]+\.jsonl)$/.exec(e.path);
       if (!m) continue;
       const { sortKey, dayLabel } = metaFromFileName(m[2]);
-      out.push({ agent: m[1], path: e.path, fileName: m[2], sortKey, dayLabel });
+      out.push({
+        agent: m[1],
+        path: e.path,
+        fileName: m[2],
+        sortKey,
+        dayLabel,
+        name: index[e.path]?.name ?? "",
+      });
     }
     return out.sort((a, b) => b.sortKey - a.sortKey);
   } catch {

@@ -27,7 +27,7 @@ export function showSessionPicker(
     .filter((s) => !onlyCurrent || s.agent === currentAgent)
     .map((s) => ({
       id: s.fileName, // 文件名唯一，作稳定 id
-      label: `[${s.agent}] ${s.fileName}`,
+      label: s.name ? `[${s.agent}] ${s.name} · ${s.fileName}` : `[${s.agent}] ${s.fileName}`,
       data: s,
     }));
 
