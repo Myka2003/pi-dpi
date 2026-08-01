@@ -66,7 +66,7 @@ async function restoreArchived(
     mkdirSync(dir, { recursive: true });
     if (!existsSync(dest)) {
       // 按需拉 blob（sessions/ 不在工作区）
-      const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(15000));
+      const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(120000));
       let out = buf.toString("utf-8");
       // 只改首行 header 的 cwd 为本机路径（避免 pi 在旧机器路径上跑），其余行原样
       try {
@@ -112,7 +112,7 @@ async function renameArchived(
   const repo = loadConfig().repoPath;
   try {
     // 追加 session_info（流式覆盖）→ 直写 git（sessions/ 不在工作区）
-    const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(15000));
+    const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(120000));
     const record = { type: "session_info", name };
     const updated = `${buf.toString("utf-8")}${JSON.stringify(record)}\n`;
     const tmp = join(repo, ".git", `rename-${s.fileName}.tmp`);
