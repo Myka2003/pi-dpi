@@ -14,8 +14,16 @@ engine, and the same content repo can be distributed across machines and team me
 
 ## Install
 
+**Recommended** — install from npm (versioned releases, cached installs):
+
 ```bash
 pi install npm:@myka2003/pi-dpi
+```
+
+Alternative — latest from GitHub (unversioned, always current):
+
+```bash
+pi install git:github.com/oc101363-creator/pi-dpi
 ```
 
 ## Getting Started: `/dpi-agent-login`

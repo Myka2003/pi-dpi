@@ -13,8 +13,16 @@ agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、�
 
 ## 安装
 
+**推荐**——从 npm 安装（版本化发布、安装有缓存）：
+
 ```bash
 pi install npm:@myka2003/pi-dpi
+```
+
+备选——GitHub 最新版（无版本号，始终最新）：
+
+```bash
+pi install git:github.com/oc101363-creator/pi-dpi
 ```
 
 ## 使用：`/dpi-agent-login`
