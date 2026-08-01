@@ -130,14 +130,14 @@ export default function (pi: ExtensionAPI) {
     blob: string; // blob hash（前 8 位）
     relPath: string; // sessions/<agent>/<file>.jsonl
     pushed: boolean; // 推送成功
+    upToDate?: boolean; // force 但内容无变化（无名字时）
   }
 
   async function archiveSession(
     ctx: ExtensionContext,
     opts: { force?: boolean; name?: string } = {},
   ): Promise<ArchiveResult | null> {
-    try {
-      const file = ctx.sessionManager.getSessionFile();
+    const file = ctx.sessionManager.getSessionFile();
       const cfg = loadConfig();
       if (!cfg.recordSessions) return null;
       if (!file || !existsSync(file)) return null;
@@ -166,6 +166,20 @@ export default function (pi: ExtensionAPI) {
         timeoutMs: 8000,
       });
       if (opts.name) setSessionNameInIndex(cfg.repoPath, relPath, opts.name); // 名字索引同步
+      // force 但内容无变化（无名字）：已是最新，无需 commit/push
+      if (opts.force && !opts.name) {
+        try {
+          const { stdout } = await gitIn(cfg.repoPath, ["rev-parse", `HEAD:${relPath}`], {
+            noAuth: true,
+            timeoutMs: 8000,
+          });
+          if (stdout.trim() === blob) {
+            return { commit: "", blob: blob.slice(0, 8), relPath, pushed: false, upToDate: true };
+          }
+        } catch {
+          // HEAD 无此路径（首次归档）：正常提交
+        }
+      }
       await gitIn(cfg.repoPath, ["add", "session-index.json"], { noAuth: true, timeoutMs: 8000 });
       await gitIn(
         cfg.repoPath,
@@ -209,11 +223,7 @@ export default function (pi: ExtensionAPI) {
         },
       });
       if (!verified) throw new Error("commit verification failed");
-      return { commit: commit.slice(0, 8), blob: blob.slice(0, 8), relPath, pushed };
-    } catch {
-      // 归档失败：返回 null（调用方决定反馈；定时路径静默）
-      return null;
-    }
+    return { commit: commit.slice(0, 8), blob: blob.slice(0, 8), relPath, pushed };
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -228,8 +238,8 @@ export default function (pi: ExtensionAPI) {
     // 启动定时归档：立即一次（补上次未归档）+ 每 15 分钟
     if (archiveTimer) clearInterval(archiveTimer);
     lastArchivedKey = "";
-    void archiveSession(ctx);
-    archiveTimer = setInterval(() => void archiveSession(ctx), ARCHIVE_INTERVAL);
+    void archiveSession(ctx).catch(() => {}); // 定时路径静默
+    archiveTimer = setInterval(() => void archiveSession(ctx).catch(() => {}), ARCHIVE_INTERVAL);
   });
 
   pi.on("session_shutdown", () => {
@@ -271,10 +281,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.setWorkingMessage("Saving session…"); // 转圈指示
         const result = await archiveSession(ctx, { force: true, name: name || undefined });
         if (!result) {
-          ctx.ui.notify(
-            "Save failed ✗ — could not write to git (check content repo binding / /dpi-record)",
-            "error",
-          );
+          ctx.ui.notify("Save failed ✗ — nothing to save (no active session?)", "error");
+          return;
+        }
+        if (result.upToDate) {
+          ctx.ui.notify("Saved — already up to date (no changes since last archive)", "info");
           return;
         }
         const lines = [
