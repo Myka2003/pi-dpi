@@ -360,8 +360,64 @@ export function stripTrailingNonMessage(text: string): string {
  * 2. 坏行（JSON 解析失败）
  * 3. 尾部非 message entry（pi 以最后一条为树叶子，元数据尾会导致空上下文）
  * 名字在 session-index 不丢；header 在第一行不受影响。 */
+/** 断链修复：回溯链断裂处（parentId 指向被 compaction 移除的旧消息）——
+ * pi 运行时内存里有旧消息（上下文完整），但文件是 compaction 后重写的（断链）。
+ * 恢复（跨进程加载文件）会断链 → 上下文只剩最后几条。返回断链头 → compaction
+ * 的修复映射——调用方输出行时替换 parentId，pi 的 buildContextEntries 识别
+ * compaction → 上下文 = 摘要 + 后续消息。 */
+export function findChainRepair(
+  entries: Record<string, unknown>[],
+): Map<string, string> {
+  const repair = new Map<string, string>();
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const e of entries) {
+    if (typeof e.id === "string") byId.set(e.id, e);
+  }
+  // 从最后回溯找断点
+  let cur: Record<string, unknown> | undefined = entries[entries.length - 1];
+  let brokenHead: Record<string, unknown> | undefined;
+  while (cur) {
+    const pid: unknown = cur.parentId;
+    if (typeof pid === "string" && !byId.has(pid)) {
+      brokenHead = cur; // 断点：parentId 指向不存在的 id
+      break;
+    }
+    cur = typeof pid === "string" ? byId.get(pid) : undefined;
+  }
+  if (!brokenHead || typeof brokenHead.parentId !== "string") return repair;
+  // 全文件找 compaction（断点之前的）——接上
+  const compactions = entries.filter(
+    (e) => e.type === "compaction" && typeof e.id === "string",
+  );
+  if (compactions.length === 0) return repair;
+  const bi = entries.indexOf(brokenHead);
+  const before = compactions.filter((c) => entries.indexOf(c) < bi);
+  const target =
+    (before.length > 0 ? before[before.length - 1] : compactions[compactions.length - 1]) as Record<string, unknown>;
+  if (typeof brokenHead.id === "string" && typeof target.id === "string") {
+    repair.set(brokenHead.id, target.id);
+  }
+  return repair;
+}
+
 export function sanitizeSessionForRestore(text: string): string {
   const lines = text.split("\n").filter((l) => l.trim());
+  // 1) compaction 断链修复映射（compaction 重写文件导致 parentId 指向被移除的旧消息）
+  const allEntries: Record<string, unknown>[] = [];
+  for (const l of lines) {
+    try {
+      const r = JSON.parse(l) as Record<string, unknown>;
+      if (typeof r.id === "string") allEntries.push(r);
+    } catch {
+      // 坏行忽略（后续也会丢弃）
+    }
+  }
+  const chainRepair = findChainRepair(allEntries);
+
+  // 2) 主循环：清理（孤儿/连续 toolResult、坏行、尾部元数据）+ 链重接
+  //    删除中间行会断链（被删行的子节点 parentId 失效）——记录重定向
+  //    （被删 id → 原父 id），后续行命中即重接，保证树完整。
+  const redirect = new Map<string, string>();
   const kept: string[] = [];
   const pendingToolCalls = new Set<string>();
   let lastRole = ""; // 上一条消息 role（连续 toolResult 检测）
@@ -372,40 +428,68 @@ export function sanitizeSessionForRestore(text: string): string {
     } catch {
       continue; // 坏行丢弃（pi 加载也会跳过）
     }
+    // 有效 parentId：先查清理重定向（被删父），再查 compaction 修复
+    let repaired = false;
+    const effectiveParent: unknown = typeof rec.parentId === "string" ? (redirect.get(rec.parentId) ?? rec.parentId) : rec.parentId;
+    if (effectiveParent !== rec.parentId) {
+      rec.parentId = effectiveParent;
+      repaired = true;
+    } else if (typeof rec.id === "string") {
+      const newParent = chainRepair.get(rec.id);
+      if (newParent) {
+        rec.parentId = newParent;
+        repaired = true;
+      }
+    }
     // compaction 摘要：pi 按压缩段落构建上下文——段落之前的 tool_calls
     // 不在摘要后的上下文里，重置配对（段落内的 toolResult 独立配对）
     if (rec.type === "compaction") {
       pendingToolCalls.clear();
-      kept.push(line);
+      kept.push(repaired ? JSON.stringify(rec) : line);
       continue;
     }
     const msg = (rec.message ?? null) as Record<string, unknown> | null;
     const role = msg?.role;
     const content = msg?.content;
     if (role === "assistant" && Array.isArray(content)) {
-      for (const part of content) {
-        const pc = part as Record<string, unknown> | null;
-        if (pc && pc.type === "toolCall" && typeof pc.id === "string") {
-          pendingToolCalls.add(pc.id);
+      // pi 重放时会跳过 stopReason=error/aborted 的 assistant（transformMessages）
+      // ——它们的 tool_calls 不会进上下文，后续 toolResult 会成为孤儿（API 400）。
+      // 因此这类 assistant 的 toolCall 不进入配对追踪，让后续 toolResult 被判定孤儿丢弃。
+      const skipped = msg?.stopReason === "error" || msg?.stopReason === "aborted";
+      if (!skipped) {
+        for (const part of content) {
+          const pc = part as Record<string, unknown> | null;
+          if (pc && pc.type === "toolCall" && typeof pc.id === "string") {
+            pendingToolCalls.add(pc.id);
+          }
         }
       }
     }
     if (role === "toolResult") {
       // 连续 toolResult：API 要求 tool 消息紧跟 tool_calls，连续会 400——丢后一个
-      if (lastRole === "toolResult") continue;
+      if (lastRole === "toolResult") {
+        if (typeof rec.id === "string" && typeof effectiveParent === "string") {
+          redirect.set(rec.id, effectiveParent); // 记录重定向：子节点接到被删行的父
+        }
+        continue;
+      }
       const callId = (msg as { toolCallId?: unknown }).toolCallId;
       if (typeof callId === "string" && pendingToolCalls.has(callId)) {
-        kept.push(line);
+        kept.push(repaired ? JSON.stringify(rec) : line);
         pendingToolCalls.delete(callId);
+      } else {
+        // 孤儿 toolResult：丢弃（前置 tool_calls 已被 compaction 摘要压掉）
+        if (typeof rec.id === "string" && typeof effectiveParent === "string") {
+          redirect.set(rec.id, effectiveParent); // 记录重定向
+        }
       }
-      // 孤儿 toolResult：丢弃（前置 tool_calls 已被 compaction 摘要压掉）
       lastRole = "toolResult";
       continue;
     }
-    kept.push(line);
+    kept.push(repaired ? JSON.stringify(rec) : line);
     if (typeof role === "string") lastRole = role;
   }
-  // 尾部非 message（pi 树叶子）
+  // 3) 尾部非 message（pi 树叶子）
   while (kept.length > 0) {
     try {
       const last = JSON.parse(kept[kept.length - 1]) as Record<string, unknown>;

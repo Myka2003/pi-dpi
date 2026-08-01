@@ -123,3 +123,27 @@ describe("sanitizeSessionForRestore", () => {
     expect(out.endsWith('"content":"hi"}}\n')).toBe(true);
   });
 });
+
+describe("sanitize aborted/error tool handling", () => {
+  it("drops toolResult whose assistant was aborted (pi skips replay)", async () => {
+    const { sanitizeSessionForRestore } = await import("../src/sessions-shared.ts");
+    const text = [
+      '{"type":"session","id":"x"}',
+      '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"a"}],"stopReason":"aborted"}}',
+      '{"type":"message","message":{"role":"toolResult","toolCallId":"a"}}',
+      '{"type":"message","message":{"role":"assistant","content":"ok"}}',
+    ].join("\n") + "\n";
+    const out = sanitizeSessionForRestore(text);
+    expect(out).not.toContain('"toolCallId":"a"'); // 孤儿 toolResult 被移除
+    expect(out).toContain('"content":"ok"');
+  });
+  it("keeps toolResult for normal assistant (stopReason toolUse)", async () => {
+    const { sanitizeSessionForRestore } = await import("../src/sessions-shared.ts");
+    const text = [
+      '{"type":"session","id":"x"}',
+      '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"b"}],"stopReason":"toolUse"}}',
+      '{"type":"message","message":{"role":"toolResult","toolCallId":"b"}}',
+    ].join("\n") + "\n";
+    expect(sanitizeSessionForRestore(text)).toContain('"toolCallId":"b"');
+  });
+});
