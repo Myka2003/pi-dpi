@@ -255,7 +255,7 @@ export class VimListPicker<T> implements Component {
     // 导航模式
     if (matchesKey(data, Key.down) || data === "j") return this.state.moveDown();
     if (matchesKey(data, Key.up) || data === "k") return this.state.moveUp();
-    if (matchesKey(data, Key.pageDown) || data === " ") return this.state.movePage(true);
+    if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
     if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
     if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
     if (matchesKey(data, Key.ctrl("u"))) return this.state.moveHalf(false);
@@ -284,8 +284,14 @@ export class VimListPicker<T> implements Component {
       }
       return;
     }
+    // 空格：toggle 模式切换勾选；select 模式翻页（不能用前置分支拦截，
+    // 否则 toggle 永远到不了这里——之前把空格并进 pageDown 分支导致的 bug）
     if (data === " ") {
-      if (this.opts.mode === "toggle") this.state.toggleCurrent();
+      if (this.opts.mode === "toggle") {
+        this.state.toggleCurrent();
+      } else {
+        this.state.movePage(true);
+      }
       return;
     }
     if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
