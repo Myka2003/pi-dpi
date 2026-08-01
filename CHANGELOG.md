@@ -3,6 +3,14 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.0] - 2026-08-01
+
+### Changed
+- **Session storage model**: content repo clones are now sparse (`--filter=blob:none --sparse`),
+  `sessions/` never enters the worktree — browsing uses git metadata (ls-tree), restore/rename/
+  delete/archive operate on the git object store on demand. Onboarding: ~5s / few MB instead of
+  357MB / minutes. Online-only (confirmed).
+
 ## [0.7.1] - 2026-08-01
 
 ### Added
