@@ -3,6 +3,20 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.1] - 2026-08-01
+
+### Added
+- First-run onboarding: `/dpi-agent-login` (no args) asks whether you have a content repo —
+  offers local initialization (zero-config, single machine) or the forkable starter template;
+  startup prompts when unbound
+- Bootstrap now runs `git init` so local binds are real git repos
+
+### Fixed
+- Space key in toggle mode was intercepted by the page-down branch (could only toggle with Enter)
+- Large archives (>2MB) lost their name (session_info lives at the file tail)
+- Renaming the current session's archive now also renames the live session
+- `features.tablet` references tolerate missing module (ser7 eval crash)
+
 ## [Unreleased]
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "@myka2003/pi-dpi",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "dπ — 拆解 π：pi 的解耦 agent 仓库引擎",
   "license": "MIT",
   "keywords": [
