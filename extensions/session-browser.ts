@@ -118,12 +118,16 @@ async function restoreArchived(
     return false;
   }
   try {
-    await ctx.switchSession(dest);
+    // switchSession 后旧 ctx 失效（stale）——完成通知移到 withSession 的新 ctx
+    await ctx.switchSession(dest, {
+      withSession: async (newCtx) => {
+        newCtx.ui.notify(`Restored in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${s.fileName}`, "info");
+      },
+    });
   } catch {
     ctx.ui.notify(`Copied to local sessions, use /resume (${s.fileName})`, "info");
     return false;
   }
-  ctx.ui.notify(`Restored in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${s.fileName}`, "info");
   return true;
 }
 
