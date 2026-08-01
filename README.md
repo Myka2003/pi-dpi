@@ -15,7 +15,7 @@ engine, and the same content repo can be distributed across machines and team me
 ## Install
 
 ```bash
-pi install git:github.com/oc101363-creator/pi-dpi
+pi install npm:@myka2003/pi-dpi
 ```
 
 ## Getting Started: `/dpi-agent-login`

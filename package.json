@@ -1,5 +1,5 @@
 {
-  "name": "pi-dpi",
+  "name": "@myka2003/pi-dpi",
   "version": "0.7.0",
   "description": "dπ — 拆解 π：pi 的解耦 agent 仓库引擎",
   "license": "MIT",
@@ -34,5 +34,13 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oc101363-creator/pi-dpi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oc101363-creator/pi-dpi/issues"
+  },
+  "homepage": "https://github.com/oc101363-creator/pi-dpi#readme"
 }

@@ -14,7 +14,7 @@ agent 内容）：它把「agent 世界」从 pi 包中拆出来——人格、�
 ## 安装
 
 ```bash
-pi install git:github.com/oc101363-creator/pi-dpi
+pi install npm:@myka2003/pi-dpi
 ```
 
 ## 使用：`/dpi-agent-login`
