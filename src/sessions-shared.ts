@@ -77,7 +77,9 @@ function lineTimestamp(
   return 0;
 }
 
-/** 解析单个存档 .jsonl；坏文件返回 null（调用方跳过） */
+/** 解析单个存档 .jsonl；坏文件返回 null（调用方跳过）。
+ * >2MB 的大文件读头尾各 256KB（头部拿 header/首条消息，尾部拿
+ * session_info 名字与最后消息时间——名字在文件尾部，只读头会丢）。 */
 export function parseArchived(agent: string, path: string): ArchivedSession | null {
   try {
     const partial = statSync(path).size > BIG_FILE_BYTES;
@@ -85,9 +87,15 @@ export function parseArchived(agent: string, path: string): ArchivedSession | nu
     if (partial) {
       const fd = openSync(path, "r");
       try {
-        const buf = Buffer.alloc(HEAD_BYTES);
-        const n = readSync(fd, buf, 0, HEAD_BYTES, 0);
-        text = buf.toString("utf-8", 0, n);
+        const size = statSync(path).size;
+        const buf = Buffer.alloc(HEAD_BYTES * 2);
+        const n1 = readSync(fd, buf, 0, HEAD_BYTES, 0); // 头部：header/首条消息
+        const tailStart = Math.max(0, size - HEAD_BYTES);
+        let n2 = 0;
+        if (tailStart >= n1) {
+          n2 = readSync(fd, buf, HEAD_BYTES, HEAD_BYTES, tailStart); // 尾部：session_info/最后时间
+        }
+        text = buf.toString("utf-8", 0, n1 + n2);
       } finally {
         closeSync(fd);
       }
@@ -152,9 +160,8 @@ export function parseArchived(agent: string, path: string): ArchivedSession | nu
     }
     if (!parsedAny) return null; // 全坏行/空文件：坏文件跳过
     if (partial) {
-      // 大文件按文件名展示：头部解析出的名字/计数会误导，丢弃
-      entry.name = "";
-      entry.firstUser = "";
+      // 大文件：名字保留（尾部 session_info 已解析）、首条消息保留（头部）、
+      // 计数丢弃（只读了头尾，消息数不完整会误导）
       entry.messages = 0;
     }
     return entry;
@@ -206,7 +213,9 @@ export function relTime(ms: number): string {
 
 /** 列表条目标题：name ?? 固定格式「MM-DD 目录 · 首条消息」；partial 按文件名展示 */
 export function entryTitle(s: ArchivedSession): string {
-  if (s.partial) return s.fileName;
+  // partial（大文件）：有名字显示名字，否则按文件名展示（首条消息可能缺）
+  const pname = s.name.replace(/\s+/g, " ").trim();
+  if (s.partial) return pname ? truncate(pname, 40) : s.fileName;
   const t = s.name.replace(/\s+/g, " ").trim();
   if (t) return truncate(t, 40);
   const day = s.dayLabel.slice(5); // YYYY-MM-DD → MM-DD
