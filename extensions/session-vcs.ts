@@ -21,17 +21,18 @@
  * 未绑定内容仓库时静默跳过。agent 名 /^[\w-]+$/ 白名单校验防路径穿越，非法
  * 回退 _unknown；全部容错，绝不抛异常阻断 pi。
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   existsSync,
   mkdirSync,
+  statSync,
   readFileSync,
   readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { loadConfig, saveConfig } from "../src/config.ts";
+import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { writeSaveState } from "../src/save-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
@@ -114,20 +115,23 @@ function migrateLegacySessions(root: string): void {
 }
 
 export default function (pi: ExtensionAPI) {
-  // 会话结束时：先清理坏消息，再把干净版 JSONL 复制进仓库 sessions/<agent>/ 目录
-  // 并立即 commit（持久化不依赖扩展顺序）；push 由 dpi-sync 统一处理。
-  // 归档结果写入 save-state（面板 Sync 指示），过程给用户可见的保存提示。
-  pi.on("session_shutdown", async (_event, ctx) => {
+  // 定时归档：会话开着也每 15 分钟归档一次（人们不会频繁退出会话，退出时归档
+  // 等于长期不同步）。复用 recordSessions 开关；启动时立即补归档一次（上次未归档的）。
+  // 归档 = hash-object + update-index 直写 git（sessions/ 不在工作区）+ commit + push。
+  const ARCHIVE_INTERVAL = 15 * 60 * 1000;
+  let lastArchivedKey = ""; // 会话文件 mtime:size，避免空归档
+  let archiveTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function archiveSession(ctx: ExtensionContext): Promise<void> {
     try {
       const file = ctx.sessionManager.getSessionFile();
-      if (file) repairSessionFile(file); // 自愈：坏消息不进归档、不毒害下次加载
       const cfg = loadConfig();
       if (!cfg.recordSessions) return;
-      const root = sessionsRoot();
-      if (!root) return;
       if (!file || !existsSync(file)) return;
-      ctx.ui.notify("Saving session…", "info");
-      // 稀疏模型：归档直写 git 对象库（sessions/ 不在工作区，不能 copyFileSync + git add）
+      const st = statSync(file);
+      const key = `${st.mtimeMs}:${st.size}`;
+      if (key === lastArchivedKey) return; // 无变化不空提交
+      repairSessionFile(file);
       const relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
       const blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
       await gitUpdateIndexCacheInfo(cfg.repoPath, relPath, blob, {
@@ -138,6 +142,17 @@ export default function (pi: ExtensionAPI) {
         noAuth: true,
         timeoutMs: 8000,
       });
+      try {
+        await gitIn(cfg.repoPath, ["push"], gitAuthOpts(15000)); // 推送（私有仓库带 token）
+      } catch {
+        // push 失败静默（下次归档/启动补推）
+      }
+      try {
+        await gitIn(cfg.repoPath, ["gc", "--auto"], { noAuth: true, timeoutMs: 8000 }); // 轻量 gc（阈值内 no-op）
+      } catch {
+        // gc 失败静默
+      }
+      lastArchivedKey = key;
       writeSaveState({
         lastArchive: {
           time: new Date().toISOString(),
@@ -146,12 +161,11 @@ export default function (pi: ExtensionAPI) {
         },
       });
     } catch {
-      // 存档失败不阻断退出
+      // 归档失败静默（下个周期重试）
     }
-  });
+  }
 
-  // 启动时清理被替换下去的旧会话文件（new/resume/fork 时事件携带其路径）
-  pi.on("session_start", async (event) => {
+  pi.on("session_start", async (event, ctx) => {
     try {
       if (event.previousSessionFile) repairSessionFile(event.previousSessionFile);
     } catch {
@@ -160,6 +174,18 @@ export default function (pi: ExtensionAPI) {
     const root = sessionsRoot();
     if (!root) return;
     migrateLegacySessions(root);
+    // 启动定时归档：立即一次（补上次未归档）+ 每 15 分钟
+    if (archiveTimer) clearInterval(archiveTimer);
+    lastArchivedKey = "";
+    void archiveSession(ctx);
+    archiveTimer = setInterval(() => void archiveSession(ctx), ARCHIVE_INTERVAL);
+  });
+
+  pi.on("session_shutdown", () => {
+    if (archiveTimer) {
+      clearInterval(archiveTimer);
+      archiveTimer = null;
+    }
   });
 
   registerDpiCommand(pi, "dpi-session-repair", {
