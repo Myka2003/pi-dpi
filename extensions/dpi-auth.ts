@@ -208,7 +208,29 @@ async function ensureRepo(
     } catch {
       // 指向/fetch 失败不阻断绑定（内容校验用本地 agents/，远端同步由 /sync 负责）
     }
-    ctx.ui.notify(`本地仓库已存在，跳过克隆：${repoPath}`, "info");
+    // 老仓库（全量模式）自动迁移到稀疏模式：sessions/ 从工作区移除（对象库保留，git 可恢复），
+    // 之后浏览/恢复/归档按需走 git（与重构后的新克隆一致）
+    let migrated = false;
+    try {
+      const { stdout } = await gitIn(repoPath, ["sparse-checkout", "list"], gitOpts);
+      if (!stdout.trim()) {
+        await gitIn(repoPath, ["sparse-checkout", "init", "--cone"], gitOpts);
+        await gitIn(
+          repoPath,
+          ["sparse-checkout", "set", "agents", "skills", "extensions", "machines", "docs"],
+          gitOpts,
+        );
+        migrated = true;
+      }
+    } catch {
+      // 迁移失败不阻断（老模式仍可用）
+    }
+    ctx.ui.notify(
+      migrated
+        ? `本地仓库已存在，已转换为稀疏模式（sessions 按需拉取）：${repoPath}`
+        : `本地仓库已存在，跳过克隆：${repoPath}`,
+      "info",
+    );
     try {
       const { stdout } = await gitIn(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
       return stdout.trim() || "main";
