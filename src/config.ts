@@ -170,6 +170,14 @@ export function saveConfig(patch: Partial<DpiConfig>): DpiConfig {
   return next;
 }
 
+/** git 远端操作 opts（可能触发 lazy fetch/push 的操作用）：私有仓库带 token，ssh/local 零凭证 */
+export function gitAuthOpts(timeoutMs = 8000): import("./git.ts").GitOptions {
+  const cfg = loadConfig();
+  return remoteNeedsToken(cfg.remoteKind)
+    ? { tokenFile: tokenPath(), proxy: cfg.proxy, timeoutMs }
+    : { noAuth: true, timeoutMs };
+}
+
 export function hasToken(): boolean {
   return readToken() !== "";
 }

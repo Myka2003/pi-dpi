@@ -235,6 +235,7 @@ export function entryLabel(s: ArchivedSession): string {
 
 import { gitLsTree, gitShow } from "./git.ts";
 import { readSessionIndex } from "./session-index.ts";
+import { gitAuthOpts } from "./config.ts";
 
 /** 从 JSONL 文本解析最新 session_info 名字（流式覆盖取最后一条） */
 export function parseNameFromText(text: string): string {
@@ -303,7 +304,7 @@ export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
 /** 懒加载单个归档的名字（git show 拉 blob 解析 session_info） */
 export async function fetchArchivedName(repo: string, path: string): Promise<string> {
   try {
-    const buf = await gitShow(repo, "origin/main", path, { noAuth: true, timeoutMs: 8000 });
+    const buf = await gitShow(repo, "origin/main", path, gitAuthOpts());
     return parseNameFromText(buf.toString("utf-8"));
   } catch {
     return "";

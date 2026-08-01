@@ -16,7 +16,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, remoteNeedsToken, tokenPath } from "../src/config.ts";
+import { gitAuthOpts, loadConfig } from "../src/config.ts";
 import { errMsg } from "../src/common.ts";
 import { gitIn } from "../src/git.ts";
 import {
@@ -45,14 +45,6 @@ function gitOpts() {
   return { noAuth: true, timeoutMs: 8000 };
 }
 
-/** push 需要远端认证（私有仓库）——从 dpi 配置取 token/proxy */
-function gitPushOpts() {
-  const cfg = loadConfig();
-  return remoteNeedsToken(cfg.remoteKind)
-    ? { tokenFile: tokenPath(), proxy: cfg.proxy, timeoutMs: 15000 }
-    : { noAuth: true, timeoutMs: 15000 };
-}
-
 /** 恢复：gitShow 拉 blob → 本机会话目录（改写 cwd header）→ switchSession。返回是否已切换 */
 async function restoreArchived(
   ctx: ExtensionCommandContext,
@@ -74,7 +66,7 @@ async function restoreArchived(
     mkdirSync(dir, { recursive: true });
     if (!existsSync(dest)) {
       // 按需拉 blob（sessions/ 不在工作区）
-      const buf = await gitShow(repo, "origin/main", s.path, gitOpts());
+      const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(15000));
       let out = buf.toString("utf-8");
       // 只改首行 header 的 cwd 为本机路径（避免 pi 在旧机器路径上跑），其余行原样
       try {
@@ -120,7 +112,7 @@ async function renameArchived(
   const repo = loadConfig().repoPath;
   try {
     // 追加 session_info（流式覆盖）→ 直写 git（sessions/ 不在工作区）
-    const buf = await gitShow(repo, "origin/main", s.path, gitOpts());
+    const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(15000));
     const record = { type: "session_info", name };
     const updated = `${buf.toString("utf-8")}${JSON.stringify(record)}\n`;
     const tmp = join(repo, ".git", `rename-${s.fileName}.tmp`);
@@ -132,7 +124,7 @@ async function renameArchived(
     await gitIn(repo, ["commit", "-m", `rename session ${s.fileName}`], gitOpts());
     // 推送（带认证；失败静默，下次同步补）
     try {
-      await gitIn(repo, ["push"], gitPushOpts());
+      await gitIn(repo, ["push"], gitAuthOpts(15000));
     } catch {
       // push 失败不阻断（内容已本地提交）
     }
@@ -175,7 +167,7 @@ async function deleteArchived(
     await gitIn(repo, ["add", "session-index.json"], gitOpts());
     await gitIn(repo, ["commit", "-m", `delete session ${s.fileName}`], gitOpts());
     try {
-      await gitIn(repo, ["push"], gitPushOpts());
+      await gitIn(repo, ["push"], gitAuthOpts(15000));
     } catch {
       // push 失败静默
     }
