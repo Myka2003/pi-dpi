@@ -310,3 +310,20 @@ export async function fetchArchivedName(repo: string, path: string): Promise<str
     return "";
   }
 }
+
+/** 移除尾部非 message entry（session_info/session 等元数据）。
+ * pi 以最后一条 entry 为会话树叶子——尾部元数据（改名/归档追加）导致
+ * 恢复后上下文为空。名字在 session-index 不丢；header 在第一行不受影响。 */
+export function stripTrailingNonMessage(text: string): string {
+  const lines = text.split("\n").filter((l) => l.trim());
+  while (lines.length > 0) {
+    try {
+      const last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+      if (last.type === "message") break;
+    } catch {
+      break; // 坏行不处理
+    }
+    lines.pop();
+  }
+  return lines.join("\n") + "\n";
+}

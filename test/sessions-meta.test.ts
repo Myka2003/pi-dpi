@@ -69,3 +69,24 @@ describe("session-index", () => {
     expect(readSessionIndex(repo)[p]).toBeUndefined();
   });
 });
+
+describe("stripTrailingNonMessage", () => {
+  it("removes trailing session_info (restore 空上下文修复)", async () => {
+    const { stripTrailingNonMessage } = await import("../src/sessions-shared.ts");
+    const text = '{"type":"session","id":"x"}\n{"type":"message","message":{"role":"user","content":"hi"}}\n{"type":"session_info","name":"foo"}\n';
+    const out = stripTrailingNonMessage(text);
+    expect(out.endsWith('"content":"hi"}}\n')).toBe(true);
+    expect(out).not.toContain("session_info");
+  });
+  it("keeps trailing message untouched", async () => {
+    const { stripTrailingNonMessage } = await import("../src/sessions-shared.ts");
+    const text = '{"type":"session","id":"x"}\n{"type":"message","message":{"role":"assistant","content":"ok"}}\n';
+    expect(stripTrailingNonMessage(text)).toBe(text);
+  });
+  it("removes multiple trailing non-message entries", async () => {
+    const { stripTrailingNonMessage } = await import("../src/sessions-shared.ts");
+    const text = '{"type":"session","id":"x"}\n{"type":"message","message":{"role":"user","content":"hi"}}\n{"type":"session_info","name":"a"}\n{"type":"thinking_level_change"}\n';
+    const out = stripTrailingNonMessage(text);
+    expect(out.endsWith('"content":"hi"}}\n')).toBe(true);
+  });
+});
