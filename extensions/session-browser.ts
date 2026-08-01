@@ -103,8 +103,11 @@ async function deleteArchived(
   return true;
 }
 
-/** 重命名：追加 session_info 行（流式覆盖，解析取最新一条），返回是否成功 */
+/** 重命名：追加 session_info 行（流式覆盖，解析取最新一条），返回是否成功。
+ * 若目标归档就是当前会话（文件名匹配），联动 ctx.setSessionName 同步
+ * 当前会话名（否则下次退出归档会被本地文件覆盖，名字被冲掉）。 */
 async function renameArchived(
+  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   s: ArchivedSession,
 ): Promise<boolean> {
@@ -113,6 +116,23 @@ async function renameArchived(
   try {
     const record = { type: "session_info", name };
     appendFileSync(s.path, `${JSON.stringify(record)}\n`, "utf-8");
+    // 当前会话的归档：联动改本机会话名（立即生效 + 触发 session_info_changed 重绘卡片）
+    let isCurrent = false;
+    try {
+      const cur = ctx.sessionManager.getSessionFile() ?? "";
+      isCurrent = cur.split("/").pop() === s.fileName;
+    } catch {
+      isCurrent = false;
+    }
+    if (isCurrent) {
+      try {
+        pi.setSessionName(name);
+        ctx.ui.notify(`Renamed to: ${name} (current session)`, "info");
+        return true;
+      } catch {
+        // setSessionName 失败不阻断归档改名
+      }
+    }
   } catch (e) {
     ctx.ui.notify(`Rename failed: ${errMsg(e)}`, "error");
     return false;
@@ -173,7 +193,7 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
         if (action === RENAME_ITEM) {
-          if (await renameArchived(ctx, picked)) {
+          if (await renameArchived(pi, ctx, picked)) {
             archivedNow = scanArchived(repo); // 重扫刷新列表（显示新名字）
           }
           continue;
