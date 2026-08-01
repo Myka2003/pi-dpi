@@ -136,9 +136,10 @@ export default function (pi: ExtensionAPI) {
 
   async function archiveSession(
     ctx: ExtensionContext,
-    opts: { force?: boolean; name?: string } = {},
+    opts: { force?: boolean; name?: string; onStage?: (stage: string) => void } = {},
   ): Promise<ArchiveResult | null> {
     const file = ctx.sessionManager.getSessionFile();
+    const stage = (st: string) => opts.onStage?.(st);
       const cfg = loadConfig();
       if (!cfg.recordSessions) return null;
       if (!file || !existsSync(file)) return null;
@@ -178,6 +179,7 @@ export default function (pi: ExtensionAPI) {
           // 清理失败静默
         }
       } else {
+        stage("hashing session…");
         blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
       }
       await gitUpdateIndexCacheInfo(cfg.repoPath, relPath, blob, {
@@ -200,6 +202,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
       await gitIn(cfg.repoPath, ["add", "session-index.json"], { noAuth: true, timeoutMs: 8000 });
+      stage("committing…");
       await gitIn(
         cfg.repoPath,
         ["commit", "-m", opts.name ? `save session ${opts.name}` : "[sync] archive session"],
@@ -219,6 +222,7 @@ export default function (pi: ExtensionAPI) {
       const verified = blobInTree.trim() === blob;
       let pushed = false;
       try {
+        stage("pushing…");
         await gitIn(cfg.repoPath, ["push"], gitAuthOpts(15000)); // 推送（私有仓库带 token）
         const { stdout: remoteOut } = await gitIn(cfg.repoPath, ["rev-parse", "origin/main"], {
           noAuth: true,
@@ -302,19 +306,24 @@ export default function (pi: ExtensionAPI) {
     description: "Save current session to archive now; with a name = named savepoint",
     handler: async (args, ctx) => {
       const name = (args ?? "").trim();
+      const t0 = Date.now();
       try {
-        ctx.ui.setWorkingMessage("Saving session…"); // 转圈指示
-        const result = await archiveSession(ctx, { force: true, name: name || undefined });
+        ctx.ui.setStatus("dpi-save", "saving…"); // suckless 风格：底栏实时状态行
+        const result = await archiveSession(ctx, {
+          force: true,
+          name: name || undefined,
+          onStage: (st) => ctx.ui.setStatus("dpi-save", st),
+        });
         if (!result) {
           ctx.ui.notify("Save failed ✗ — nothing to save (no active session?)", "error");
           return;
         }
         if (result.upToDate) {
-          ctx.ui.notify("Saved — already up to date (no changes since last archive)", "info");
+          ctx.ui.notify(`Saved in ${((Date.now() - t0) / 1000).toFixed(1)}s — already up to date`, "info");
           return;
         }
         const lines = [
-          "Saved ✓",
+          `Saved ✓ in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
           `  commit ${result.commit} · blob ${result.blob}`,
           `  ${result.relPath}`,
           result.pushed
@@ -327,9 +336,9 @@ export default function (pi: ExtensionAPI) {
         if (name) lines.push(`  name: ${name}`);
         ctx.ui.notify(lines.join("\n"), "info");
       } catch (e) {
-        ctx.ui.notify(`Save failed ✗: ${errMsg(e)}`, "error");
+        ctx.ui.notify(`Save failed ✗ in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${errMsg(e)}`, "error");
       } finally {
-        ctx.ui.setWorkingMessage(); // 清除转圈
+        ctx.ui.setStatus("dpi-save", undefined); // 清除状态行
       }
     },
   });

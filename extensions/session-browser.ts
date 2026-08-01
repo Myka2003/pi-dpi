@@ -61,6 +61,8 @@ async function restoreArchived(
     return false;
   }
   const repo = loadConfig().repoPath;
+  const t0 = Date.now();
+  ctx.ui.setStatus("dpi-restore", `downloading ${s.fileName}…`);
   let dest = join(dir, s.fileName);
   // 本机已有同名文件：让用户选（覆盖用归档版 / 保留本地 / 归档版存为新会话）
   if (existsSync(dest)) {
@@ -109,8 +111,10 @@ async function restoreArchived(
       }
       writeFileSync(dest, out, "utf-8");
     }
+    ctx.ui.setStatus("dpi-restore", undefined); // 清除状态行
   } catch (e) {
-    ctx.ui.notify(`Restore failed (needs network): ${errMsg(e)}`, "error");
+    ctx.ui.setStatus("dpi-restore", undefined);
+    ctx.ui.notify(`Restore failed in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${errMsg(e)}`, "error");
     return false;
   }
   try {
@@ -119,7 +123,7 @@ async function restoreArchived(
     ctx.ui.notify(`Copied to local sessions, use /resume (${s.fileName})`, "info");
     return false;
   }
-  ctx.ui.notify(`Restored: ${s.fileName}`, "info");
+  ctx.ui.notify(`Restored in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${s.fileName}`, "info");
   return true;
 }
 
