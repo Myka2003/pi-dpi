@@ -21,6 +21,7 @@ export interface SaveState {
     time: string; // ISO
     session: string; // 归档文件名
     result: "committed" | "copied"; // committed=已 git 提交；copied=仅复制（record off）
+    blob: string; // 本机最后归档的 blob hash（分叉检测：与远端对比）
   };
   /** 最近一次推送（dpi-sync 写入） */
   lastPush?: {

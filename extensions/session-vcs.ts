@@ -35,7 +35,7 @@ import {
 import { basename, join } from "node:path";
 import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
-import { writeSaveState } from "../src/save-state.ts";
+import { readSaveState, writeSaveState } from "../src/save-state.ts";
 import { setSessionNameInIndex } from "../src/session-index.ts";
 import { errMsg } from "../src/common.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
@@ -131,6 +131,7 @@ export default function (pi: ExtensionAPI) {
     relPath: string; // sessions/<agent>/<file>.jsonl
     pushed: boolean; // 推送成功
     upToDate?: boolean; // force 但内容无变化（无名字时）
+    branched?: boolean; // 分叉：归档到了新路径（别机改过同一会话）
   }
 
   async function archiveSession(
@@ -145,7 +146,25 @@ export default function (pi: ExtensionAPI) {
       const key = `${st.mtimeMs}:${st.size}`;
       if (!opts.force && key === lastArchivedKey) return null; // 定时路径：无变化不空提交
       repairSessionFile(file);
-      const relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
+      let relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
+      // 分叉检测：本机上次归档的 blob vs 远端当前——不同说明别机改过（多机器编辑
+      // 同一恢复会话），归档到新路径（时间戳文件名），双方版本都保留不覆盖。
+      try {
+        await gitIn(cfg.repoPath, ["fetch", "origin"], gitAuthOpts()); // 轻量 fetch
+        const { stdout: remoteBlob } = await gitIn(
+          cfg.repoPath,
+          ["rev-parse", `origin/main:${relPath}`],
+          { noAuth: true, timeoutMs: 8000 },
+        );
+        const prevBlob = readSaveState().lastArchive?.blob ?? "";
+        if (remoteBlob.trim() !== "" && prevBlob !== "" && remoteBlob.trim() !== prevBlob) {
+          const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+          const branchName = `${ts}_${basename(file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "")}`;
+          relPath = `sessions/${archiveAgentName()}/${branchName}`;
+        }
+      } catch {
+        // fetch/对比失败：正常归档（无分叉检测）
+      }
       let blob: string;
       if (opts.name) {
         // 主动命名保存：内容追加 session_info（临时文件写入后 hash）
@@ -220,10 +239,17 @@ export default function (pi: ExtensionAPI) {
           time: new Date().toISOString(),
           session: basename(file),
           result: verified && pushed ? "committed" : "copied",
+          blob,
         },
       });
       if (!verified) throw new Error("commit verification failed");
-    return { commit: commit.slice(0, 8), blob: blob.slice(0, 8), relPath, pushed };
+    return {
+      commit: commit.slice(0, 8),
+      blob: blob.slice(0, 8),
+      relPath,
+      pushed,
+      branched: relPath !== `sessions/${archiveAgentName()}/${basename(file)}`,
+    };
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -295,6 +321,9 @@ export default function (pi: ExtensionAPI) {
             ? "  pushed to origin/main ✓ (visible on other machines)"
             : "  ⚠ committed locally, push pending (will retry)",
         ];
+        if (result.branched) {
+          lines.push("  ⚠ fork detected: another machine changed this session — saved as a new archive (both kept)");
+        }
         if (name) lines.push(`  name: ${name}`);
         ctx.ui.notify(lines.join("\n"), "info");
       } catch (e) {
