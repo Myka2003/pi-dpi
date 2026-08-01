@@ -37,6 +37,7 @@ import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { writeSaveState } from "../src/save-state.ts";
 import { setSessionNameInIndex } from "../src/session-index.ts";
+import { errMsg } from "../src/common.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 /**
@@ -124,18 +125,25 @@ export default function (pi: ExtensionAPI) {
   let lastArchivedKey = ""; // 会话文件 mtime:size，避免空归档
   let archiveTimer: ReturnType<typeof setInterval> | null = null;
 
+  interface ArchiveResult {
+    commit: string; // commit hash（前 8 位）
+    blob: string; // blob hash（前 8 位）
+    relPath: string; // sessions/<agent>/<file>.jsonl
+    pushed: boolean; // 推送成功
+  }
+
   async function archiveSession(
     ctx: ExtensionContext,
     opts: { force?: boolean; name?: string } = {},
-  ): Promise<void> {
+  ): Promise<ArchiveResult | null> {
     try {
       const file = ctx.sessionManager.getSessionFile();
       const cfg = loadConfig();
-      if (!cfg.recordSessions) return;
-      if (!file || !existsSync(file)) return;
+      if (!cfg.recordSessions) return null;
+      if (!file || !existsSync(file)) return null;
       const st = statSync(file);
       const key = `${st.mtimeMs}:${st.size}`;
-      if (!opts.force && key === lastArchivedKey) return; // 定时路径：无变化不空提交
+      if (!opts.force && key === lastArchivedKey) return null; // 定时路径：无变化不空提交
       repairSessionFile(file);
       const relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
       let blob: string;
@@ -164,10 +172,28 @@ export default function (pi: ExtensionAPI) {
         ["commit", "-m", opts.name ? `save session ${opts.name}` : "[sync] archive session"],
         { noAuth: true, timeoutMs: 8000 },
       );
+      // 验证：commit 存在 + blob 在 commit tree 里
+      const { stdout: headOut } = await gitIn(cfg.repoPath, ["rev-parse", "HEAD"], {
+        noAuth: true,
+        timeoutMs: 8000,
+      });
+      const commit = headOut.trim();
+      const { stdout: blobInTree } = await gitIn(
+        cfg.repoPath,
+        ["rev-parse", `HEAD:${relPath}`],
+        { noAuth: true, timeoutMs: 8000 },
+      );
+      const verified = blobInTree.trim() === blob;
+      let pushed = false;
       try {
         await gitIn(cfg.repoPath, ["push"], gitAuthOpts(15000)); // 推送（私有仓库带 token）
+        const { stdout: remoteOut } = await gitIn(cfg.repoPath, ["rev-parse", "origin/main"], {
+          noAuth: true,
+          timeoutMs: 8000,
+        });
+        pushed = remoteOut.trim() === commit; // 推送后远端指向本 commit
       } catch {
-        // push 失败静默（下次归档/启动补推）
+        pushed = false; // 推送失败（本地已存，待补推）
       }
       try {
         await gitIn(cfg.repoPath, ["gc", "--auto"], { noAuth: true, timeoutMs: 8000 }); // 轻量 gc（阈值内 no-op）
@@ -179,11 +205,14 @@ export default function (pi: ExtensionAPI) {
         lastArchive: {
           time: new Date().toISOString(),
           session: basename(file),
-          result: "committed",
+          result: verified && pushed ? "committed" : "copied",
         },
       });
+      if (!verified) throw new Error("commit verification failed");
+      return { commit: commit.slice(0, 8), blob: blob.slice(0, 8), relPath, pushed };
     } catch {
-      // 归档失败静默（下个周期重试）
+      // 归档失败：返回 null（调用方决定反馈；定时路径静默）
+      return null;
     }
   }
 
@@ -232,13 +261,37 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // /dpi-save：主动存档（Ctrl+S 式）——立即保存当前会话，带参数即命名保存点
+  // /dpi-save：主动存档（Ctrl+S 式）——立即保存当前会话，带参数即命名保存点。
+  // 完整反馈：转圈 → 验证 commit/blob/推送 → 成功显示位置与 hash，失败显示失败步骤。
   registerDpiCommand(pi, "dpi-save", {
     description: "Save current session to archive now; with a name = named savepoint",
     handler: async (args, ctx) => {
       const name = (args ?? "").trim();
-      await archiveSession(ctx, { force: true, name: name || undefined });
-      ctx.ui.notify(name ? `Saved: ${name}` : "Session saved", "info");
+      try {
+        ctx.ui.setWorkingMessage("Saving session…"); // 转圈指示
+        const result = await archiveSession(ctx, { force: true, name: name || undefined });
+        if (!result) {
+          ctx.ui.notify(
+            "Save failed ✗ — could not write to git (check content repo binding / /dpi-record)",
+            "error",
+          );
+          return;
+        }
+        const lines = [
+          "Saved ✓",
+          `  commit ${result.commit} · blob ${result.blob}`,
+          `  ${result.relPath}`,
+          result.pushed
+            ? "  pushed to origin/main ✓ (visible on other machines)"
+            : "  ⚠ committed locally, push pending (will retry)",
+        ];
+        if (name) lines.push(`  name: ${name}`);
+        ctx.ui.notify(lines.join("\n"), "info");
+      } catch (e) {
+        ctx.ui.notify(`Save failed ✗: ${errMsg(e)}`, "error");
+      } finally {
+        ctx.ui.setWorkingMessage(); // 清除转圈
+      }
     },
   });
 
