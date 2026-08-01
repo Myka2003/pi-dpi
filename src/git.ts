@@ -35,6 +35,8 @@ export interface GitOptions {
   noAuth?: boolean;
   proxy?: string;
   timeoutMs?: number;
+  /** stdout/stderr 最大缓冲（字节）；git show 大 blob 默认 1MB 会爆，统一放宽 */
+  maxBuffer?: number;
 }
 
 function buildPrefix(opts: GitOptions): string[] {
@@ -48,6 +50,7 @@ function buildPrefix(opts: GitOptions): string[] {
 export async function gitIn(cwd: string, args: string[], opts: GitOptions = {}) {
   return run("git", ["-C", cwd, ...buildPrefix(opts), ...args], {
     timeout: opts.timeoutMs ?? GIT_TIMEOUT,
+    maxBuffer: opts.maxBuffer ?? 256 * 1024 * 1024,
   });
 }
 
@@ -55,6 +58,7 @@ export async function gitIn(cwd: string, args: string[], opts: GitOptions = {}) 
 export async function git(args: string[], opts: GitOptions = {}) {
   return run("git", [...buildPrefix(opts), ...args], {
     timeout: opts.timeoutMs ?? GIT_TIMEOUT,
+    maxBuffer: opts.maxBuffer ?? 256 * 1024 * 1024,
   });
 }
 

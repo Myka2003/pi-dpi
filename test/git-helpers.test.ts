@@ -64,3 +64,17 @@ describe("git helpers", () => {
     expect(entries.some((e) => e.path === "sessions/coder/cur.jsonl")).toBe(false);
   });
 });
+
+describe("gitShow large blob", () => {
+  it("reads blob larger than 1MB default maxBuffer", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(join(repo, "sessions/coder"), { recursive: true });
+    const big = join(repo, "sessions/coder/big.jsonl");
+    writeFileSync(big, '{"type":"session","timestamp":"2026-08-03T00:00:00Z"}\n' + "x".repeat(2 * 1024 * 1024) + "\n");
+    run("add", "-A");
+    run("commit", "-m", "big");
+    rmSync(join(repo, "sessions"), { recursive: true });
+    const buf = await gitShow(repo, "HEAD", "sessions/coder/big.jsonl", { noAuth: true });
+    expect(buf.length).toBeGreaterThan(2 * 1024 * 1024);
+  });
+});
