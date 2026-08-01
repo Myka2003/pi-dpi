@@ -109,6 +109,20 @@ async function restoreArchived(
       } catch {
         // 首行损坏/取 cwd 失败：原样写入
       }
+      // 修复：pi 以最后一条 entry 为树叶子——尾部 session_info（改名/归档追加的
+      // 元数据，非 message）会导致恢复后上下文为空。写入前移除尾部非 message
+      // entry（名字在 session-index 里，不丢；header 在第一行不受影响）。
+      const lines = out.split("\n").filter((l) => l.trim());
+      while (lines.length > 0) {
+        try {
+          const last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+          if (last.type === "message") break;
+        } catch {
+          break; // 坏行不处理
+        }
+        lines.pop();
+      }
+      out = lines.join("\n") + "\n";
       writeFileSync(dest, out, "utf-8");
     }
     ctx.ui.setStatus("dpi-restore", undefined); // 清除状态行
