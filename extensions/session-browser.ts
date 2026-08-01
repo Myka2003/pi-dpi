@@ -16,7 +16,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, remoteNeedsToken, tokenPath } from "../src/config.ts";
 import { errMsg } from "../src/common.ts";
 import { gitIn } from "../src/git.ts";
 import {
@@ -39,9 +39,17 @@ const RENAME_ITEM = "✏ Rename";
 const DELETE_ITEM = "✕ Delete archive (git recoverable)";
 const BACK_ITEM = "← Back";
 
-/** 归档 git 操作 opts（noAuth：本地 git 零凭证，远端已由 3 秒监听 fetch） */
+/** 本地 git 操作 opts（noAuth：本地对象操作零凭证） */
 function gitOpts() {
   return { noAuth: true, timeoutMs: 8000 };
+}
+
+/** push 需要远端认证（私有仓库）——从 dpi 配置取 token/proxy */
+function gitPushOpts() {
+  const cfg = loadConfig();
+  return remoteNeedsToken(cfg.remoteKind)
+    ? { tokenFile: tokenPath(), proxy: cfg.proxy, timeoutMs: 15000 }
+    : { noAuth: true, timeoutMs: 15000 };
 }
 
 /** 恢复：gitShow 拉 blob → 本机会话目录（改写 cwd header）→ switchSession。返回是否已切换 */
@@ -119,9 +127,9 @@ async function renameArchived(
     const blob = await gitHashObject(repo, tmp, gitOpts());
     await gitUpdateIndexCacheInfo(repo, s.path, blob, gitOpts());
     await gitIn(repo, ["commit", "-m", `rename session ${s.fileName}`], gitOpts());
-    // 推送（失败静默，下次同步补）
+    // 推送（带认证；失败静默，下次同步补）
     try {
-      await gitIn(repo, ["push"], gitOpts());
+      await gitIn(repo, ["push"], gitPushOpts());
     } catch {
       // push 失败不阻断（内容已本地提交）
     }
@@ -162,7 +170,7 @@ async function deleteArchived(
     await gitIndexRemove(repo, s.path, gitOpts());
     await gitIn(repo, ["commit", "-m", `delete session ${s.fileName}`], gitOpts());
     try {
-      await gitIn(repo, ["push"], gitOpts());
+      await gitIn(repo, ["push"], gitPushOpts());
     } catch {
       // push 失败静默
     }
