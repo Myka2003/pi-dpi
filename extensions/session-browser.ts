@@ -61,10 +61,35 @@ async function restoreArchived(
     return false;
   }
   const repo = loadConfig().repoPath;
-  const dest = join(dir, s.fileName);
+  let dest = join(dir, s.fileName);
+  // 本机已有同名文件：让用户选（覆盖用归档版 / 保留本地 / 归档版存为新会话）
+  if (existsSync(dest)) {
+    const choice = await ctx.ui.select("Local session with same name exists", [
+      "Use archived copy (overwrite local)",
+      "Keep local (switch to it)",
+      "Save archived copy as a new session",
+    ]);
+    if (choice === undefined) return false; // 取消
+    if (choice === "Keep local (switch to it)") {
+      ctx.ui.notify(`Switching to local session (not the archived copy)`, "warning");
+      try {
+        await ctx.switchSession(dest);
+      } catch {
+        ctx.ui.notify("Switch failed, use /resume manually", "error");
+        return false;
+      }
+      return true;
+    }
+    if (choice === "Save archived copy as a new session") {
+      // 新名字：时间戳后缀（保留 uuid 前缀便于识别来源）
+      const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+      dest = join(dir, `${ts}_${s.fileName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "")}`);
+    }
+    // 覆盖 / 新名字：走下面的按需拉取写入
+  }
   try {
     mkdirSync(dir, { recursive: true });
-    if (!existsSync(dest)) {
+    {
       // 按需拉 blob（sessions/ 不在工作区）
       const buf = await gitShow(repo, "origin/main", s.path, gitAuthOpts(120000));
       let out = buf.toString("utf-8");
@@ -83,9 +108,6 @@ async function restoreArchived(
         // 首行损坏/取 cwd 失败：原样写入
       }
       writeFileSync(dest, out, "utf-8");
-    } else {
-      // 本机已有同名文件：不覆盖，直接切换（提示避免误以为恢复了远端版本）
-      ctx.ui.notify(`Local session ${s.fileName} already exists, switching to it (not the archived copy)`, "warning");
     }
   } catch (e) {
     ctx.ui.notify(`Restore failed (needs network): ${errMsg(e)}`, "error");
