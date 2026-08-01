@@ -3,6 +3,29 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.22] - 2026-08-01
+
+### Added
+- Restore sanitization (`sanitizeSessionForRestore`): generic fix for archived sessions that
+  would fail to load or be rejected by the API — consecutive/orphan tool results (compaction
+  structure), trailing non-message metadata, bad lines. Verified against all 93 archives +
+  9 pi-load tests (including compaction sessions that previously 400'd)
+- `/dpi-save [name]` manual savepoint with full feedback (staged status, commit/blob hashes,
+  push verification, timing); suckless-style footer status during save/restore
+- Session name index (`session-index.json`, synced via git) — names visible across machines
+  without fetching blobs; `/dpi-save` open is zero-network (list is local, 3s watcher keeps
+  origin/main fresh)
+- Per-request fork detection: archive to a new path instead of overwriting another machine's
+  version; restore conflict asks overwrite/keep/save-as-new
+
+### Fixed
+- Restore produced empty context when the archive ended with `session_info` (pi tree leaf)
+- Restore/delete pushes lacked credentials (private repos); gitShow lazy fetch did too
+- Large `git show` exceeded execFile's 1MB maxBuffer (256MB now)
+- Restore used stale ctx after switchSession (moved notify to withSession)
+- Space key in toggle lists was swallowed by page-down
+- OAuth scope now includes `workflow` (pushing CI files)
+
 ## [0.8.0] - 2026-08-01
 
 ### Changed

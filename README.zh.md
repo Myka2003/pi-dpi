@@ -89,13 +89,15 @@ SSH 与本地仓库无需令牌；通用 HTTPS 适用于 Gitea / Forgejo / GitLa
 | `/dpi-extensions` | 管理当前 agent 的扩展组合：勾选/取消、删除注册表扩展 |
 | `/dpi-sync` | 手动同步内容仓库（pull --rebase → 清扫提交 → push） |
 | `/dpi-record on\|off\|status` | 会话存档开关 |
-| `/dpi-sessions` | 浏览仓库存档会话，一键恢复到本机并切换 |
+| `/dpi-save [名字]` | 立即保存当前会话；带名字即命名保存点 |
+| `/dpi-sessions` | 浏览仓库存档会话（vim 导航：j/k、gg/G、/过滤），一键恢复/重命名/删除 |
 | `/dpi-session-repair` | 手动清理当前会话文件中的坏消息（重进会话生效） |
 | `/dpi-save-status` | 查看保存状态：最近归档/推送、未推送提交数 |
 
-
-自动同步：pi 启动时 `pull --rebase --autostash` + 清扫推送，退出时再清扫推送一次；
-全部静默容错，失败（断网/冲突）不影响 pi 启动。
+自动同步：3 秒远端监听 fetch GitHub 并自动拉取声明变更；15 分钟定时归档把当前会话
+写入 git 对象库（另有手动 `/dpi-save`）并带认证推送。恢复时对会话结构做通用健壮化
+（compaction 导致的孤儿/连续 tool 结果、尾部元数据），任何归档会话都能正确加载——
+不需要逐个修会话。保存状态在底栏（`sync: ✓`）与 `/dpi-save-status`。
 
 会话自愈：网关 400/429 失败或用户中断会把空 assistant 消息写进会话文件，此后每轮
 请求都被协议拒绝、会话"死亡"。引擎在退出时（归档前）与切换会话时自动清理坏消息，

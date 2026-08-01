@@ -88,14 +88,17 @@ Examples:
 | `/dpi-extensions` | Manage current agent's extensions (toggle/delete registry extensions) |
 | `/dpi-sync` | Manual sync: pull --rebase → sweep commit → push (reloads on declaration change) |
 | `/dpi-record on\|off\|status` | Session archive toggle |
+| `/dpi-save [name]` | Save the current session now; with a name = named savepoint |
 | `/dpi-sessions` | Browse archived sessions (vim nav: j/k, gg/G, / filter), restore/rename/delete |
 | `/dpi-session-repair` | Clean bad messages in the current session file (takes effect on re-entry) |
 | `/dpi-save-status` | Show save status: last archive/push, unpushed commits |
 
-Auto-sync: on session start/reload/new/resume pi pulls `--rebase --autostash` and sweeps a
-commit, pushes on exit; all silent and fault-tolerant. A 3s remote watch detects GitHub-side
-changes to `agent.json` and pulls automatically — the agent card and `[Sync]` status refresh
-live without reload.
+Auto-sync: a 3s remote watch fetches GitHub and pulls declaration changes; a 15-minute
+session archiver writes the current session to the git object store (plus manual `/dpi-save`)
+and pushes with credentials. Restore sanitizes session structures generically (orphan or
+consecutive tool results from compaction, trailing metadata) so any archived session loads
+correctly — no per-session fixes. Save status lives in the footer (`sync: ✓`) and
+`/dpi-save-status`.
 
 Session self-healing: gateway 400/429 failures or user aborts can write empty assistant
 messages into the session file, killing the session. The engine cleans them on exit and on
