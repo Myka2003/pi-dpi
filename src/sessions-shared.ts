@@ -230,3 +230,72 @@ export function entryLabel(s: ArchivedSession): string {
   const t = s.name.replace(/\s+/g, " ").trim();
   return t || s.dayLabel || s.fileName;
 }
+
+// ---------- 稀疏存储模型：git 元数据扫描 + 名字懒加载 ----------
+
+import { gitLsTree, gitShow } from "./git.ts";
+
+/** 从 JSONL 文本解析最新 session_info 名字（流式覆盖取最后一条） */
+export function parseNameFromText(text: string): string {
+  let name = "";
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const rec = JSON.parse(t) as Record<string, unknown>;
+      if (rec.type === "session_info" && typeof rec.name === "string" && rec.name.trim() !== "") {
+        name = rec.name.trim();
+      }
+    } catch {
+      // 坏行跳过
+    }
+  }
+  return name;
+}
+
+export interface ArchivedMeta {
+  agent: string;
+  path: string; // 仓库相对路径 sessions/<agent>/<file>.jsonl
+  fileName: string;
+  sortKey: number;
+  dayLabel: string;
+}
+
+/** 文件名时间戳：2026-08-01T00-00-00-000Z_<uuid>.jsonl → Date.parse（连字符代替冒号） */
+function metaFromFileName(fileName: string): { sortKey: number; dayLabel: string } {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)/.exec(fileName);
+  if (!m) return { sortKey: 0, dayLabel: "" };
+  const iso = m[1].replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "T$1:$2:$3.$4Z");
+  const ts = Date.parse(iso);
+  return { sortKey: Number.isNaN(ts) ? 0 : ts, dayLabel: m[1].slice(0, 10) };
+}
+
+/** 从 git 元数据列归档（不下载内容；sessions/ 不在工作区） */
+export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
+  try {
+    const entries = await gitLsTree(repo, "origin/main", "sessions", {
+      noAuth: true,
+      timeoutMs: 8000,
+    });
+    const out: ArchivedMeta[] = [];
+    for (const e of entries) {
+      const m = /^sessions\/([^/]+)\/([^/]+\.jsonl)$/.exec(e.path);
+      if (!m) continue;
+      const { sortKey, dayLabel } = metaFromFileName(m[2]);
+      out.push({ agent: m[1], path: e.path, fileName: m[2], sortKey, dayLabel });
+    }
+    return out.sort((a, b) => b.sortKey - a.sortKey);
+  } catch {
+    return [];
+  }
+}
+
+/** 懒加载单个归档的名字（git show 拉 blob 解析 session_info） */
+export async function fetchArchivedName(repo: string, path: string): Promise<string> {
+  try {
+    const buf = await gitShow(repo, "origin/main", path, { noAuth: true, timeoutMs: 8000 });
+    return parseNameFromText(buf.toString("utf-8"));
+  } catch {
+    return "";
+  }
+}

@@ -23,7 +23,6 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -33,7 +32,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
-import { gitIn } from "../src/git.ts";
+import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { writeSaveState } from "../src/save-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
@@ -114,24 +113,6 @@ function migrateLegacySessions(root: string): void {
   }
 }
 
-// 归档自提交：复制完成后立即 add+commit，保证归档不依赖 dpi-sync 的执行顺序
-async function commitArchive(repo: string): Promise<void> {
-  try {
-    await gitIn(repo, ["add", "-A"], { noAuth: true, timeoutMs: 8000 });
-    const { stdout } = await gitIn(repo, ["status", "--porcelain"], {
-      noAuth: true,
-      timeoutMs: 8000,
-    });
-    if (stdout.trim().length === 0) return; // 无改动不产生空提交
-    await gitIn(repo, ["commit", "-m", "[sync] archive session"], {
-      noAuth: true,
-      timeoutMs: 8000,
-    });
-  } catch {
-    // 归档提交失败静默（push 仍由 dpi-sync 负责）
-  }
-}
-
 export default function (pi: ExtensionAPI) {
   // 会话结束时：先清理坏消息，再把干净版 JSONL 复制进仓库 sessions/<agent>/ 目录
   // 并立即 commit（持久化不依赖扩展顺序）；push 由 dpi-sync 统一处理。
@@ -146,10 +127,17 @@ export default function (pi: ExtensionAPI) {
       if (!root) return;
       if (!file || !existsSync(file)) return;
       ctx.ui.notify("Saving session…", "info");
-      const dir = join(root, archiveAgentName());
-      mkdirSync(dir, { recursive: true });
-      copyFileSync(file, join(dir, basename(file)));
-      await commitArchive(cfg.repoPath); // git 操作在仓库根执行
+      // 稀疏模型：归档直写 git 对象库（sessions/ 不在工作区，不能 copyFileSync + git add）
+      const relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
+      const blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
+      await gitUpdateIndexCacheInfo(cfg.repoPath, relPath, blob, {
+        noAuth: true,
+        timeoutMs: 8000,
+      });
+      await gitIn(cfg.repoPath, ["commit", "-m", "[sync] archive session"], {
+        noAuth: true,
+        timeoutMs: 8000,
+      });
       writeSaveState({
         lastArchive: {
           time: new Date().toISOString(),

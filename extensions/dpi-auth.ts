@@ -216,19 +216,27 @@ async function ensureRepo(
       return "main";
     }
   }
-  // 优先按 main 克隆；远端默认分支不是 main 时退化为默认分支克隆
-  try {
-    await git(["clone", "--branch", "main", repoUrl, repoPath], {
+  // 稀疏克隆：blob:none（不拉文件内容）+ sparse-checkout 只检出运行时配置目录；
+  // sessions/ 永不进工作区（浏览/恢复/归档按需走 git 对象库，见 spec）
+  const SPARSE_DIRS = ["agents", "skills", "extensions", "machines", "docs"];
+  const sparseClone = async (extra: string[]): Promise<void> => {
+    await git(["clone", "--filter=blob:none", "--sparse", ...extra, repoUrl, repoPath], {
       ...gitOpts,
       timeoutMs: CLONE_TIMEOUT,
     });
+    try {
+      await gitIn(repoPath, ["sparse-checkout", "set", ...SPARSE_DIRS], gitOpts);
+    } catch {
+      // 稀疏设置失败不阻断（退化：全量工作区仍可用）
+    }
+  };
+  // 优先按 main 克隆；远端默认分支不是 main 时退化为默认分支克隆
+  try {
+    await sparseClone(["--branch", "main"]);
     return "main";
   } catch (e) {
     if (!/branch|main/i.test(errMsg(e))) throw e;
-    await git(["clone", repoUrl, repoPath], {
-      ...gitOpts,
-      timeoutMs: CLONE_TIMEOUT,
-    });
+    await sparseClone([]);
     try {
       const { stdout } = await gitIn(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
       return stdout.trim() || "main";

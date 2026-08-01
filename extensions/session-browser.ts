@@ -1,28 +1,35 @@
 /**
- * session-browser：/sessions 浏览并恢复仓库存档会话（session-vcs 的读取侧）。
+ * session-browser：/dpi-sessions 浏览并恢复仓库存档会话（session-vcs 的读取侧）。
  *
- * - 扫描 <repo>/sessions/ 下各 agent 子目录（目录名即 agent 名，含 _legacy
- *   迁移区，/^[\w-]+$/ 白名单校验），解析与标题格式见 src/sessions-shared.ts
- *   （固定格式「MM-DD 目录 · 首条消息」+ 分页展示）
- * - 选择用 vim 风格自定义组件（src/session-picker.ts）：j/k 导航、gg/G 首末页、
- *   PgUp/PgDn 翻页、/ 过滤、c 切换 agent 筛选——取代 ctx.ui.select
- *   （不支持滚动，条目多时撑爆终端）
- * - 选中会话 → 子菜单（标题 会话 — <name ?? 日期>）：「↩ 恢复到本机并切换」/
- *   「✕ 删除存档（git 可恢复）」/「← 返回」
- * - 恢复：复制进 ctx.sessionManager.getSessionDir()（同名已存在不覆盖，提示后
- *   直接切换），首行 header 的 cwd 改写为本机 getCwd()（只改首行，其余行原样），
- *   然后 ctx.switchSession()；切换失败提示已复制、请用 /resume
+ * 稀疏存储模型（spec: 2026-08-01-session-storage-model-design.md）：
+ * sessions/ 不在本地工作区——浏览用 git 元数据（scanArchivedMeta，ls-tree），
+ * 恢复/重命名/删除按需操作 git 对象库（show/hash-object/update-index）。
+ * 纯在线：操作前兜底 fetch 一次（3 秒监听已维护 origin/main 最新）。
+ *
+ * - 列表：`[agent] 文件名 · 大小`（vim 选择器），选中后懒加载名字（gitShow 单文件）
+ * - 子菜单：恢复（gitShow → 本机会话目录，改写 cwd header）/ 重命名 / 删除
  * - 非 UI 环境只 notify 各 agent 存档计数摘要；存档总数为 0 时提示无存档
  *
- * 内容仓库路径来自 dpi 配置；未绑定时提示先 /agent-login。
- * 文件读写逐步容错，绝不抛异常阻断 pi。
+ * 内容仓库路径来自 dpi 配置；未绑定时提示先 /dpi-agent-login。
+ * 全部容错：git 操作失败 notify 错误，绝不抛异常阻断 pi。
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.ts";
 import { errMsg } from "../src/common.ts";
-import { entryLabel, scanArchived, type ArchivedSession } from "../src/sessions-shared.ts";
+import { gitIn } from "../src/git.ts";
+import {
+  gitHashObject,
+  gitIndexRemove,
+  gitShow,
+  gitUpdateIndexCacheInfo,
+} from "../src/git.ts";
+import {
+  fetchArchivedName,
+  scanArchivedMeta,
+  type ArchivedMeta,
+} from "../src/sessions-shared.ts";
 import { showSessionPicker } from "../src/session-picker.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
@@ -32,10 +39,15 @@ const RENAME_ITEM = "✏ Rename";
 const DELETE_ITEM = "✕ Delete archive (git recoverable)";
 const BACK_ITEM = "← Back";
 
-/** 恢复：复制进本机会话目录（同名不覆盖）→ 改写首行 cwd → switchSession。返回是否已切换 */
+/** 归档 git 操作 opts（noAuth：本地 git 零凭证，远端已由 3 秒监听 fetch） */
+function gitOpts() {
+  return { noAuth: true, timeoutMs: 8000 };
+}
+
+/** 恢复：gitShow 拉 blob → 本机会话目录（改写 cwd header）→ switchSession。返回是否已切换 */
 async function restoreArchived(
   ctx: ExtensionCommandContext,
-  s: ArchivedSession,
+  s: ArchivedMeta,
 ): Promise<boolean> {
   let dir = "";
   try {
@@ -47,17 +59,19 @@ async function restoreArchived(
     ctx.ui.notify("Restore failed: cannot get local session dir, copy manually and /resume", "error");
     return false;
   }
+  const repo = loadConfig().repoPath;
   const dest = join(dir, s.fileName);
   try {
     mkdirSync(dir, { recursive: true });
     if (!existsSync(dest)) {
+      // 按需拉 blob（sessions/ 不在工作区）
+      const buf = await gitShow(repo, "origin/main", s.path, gitOpts());
+      let out = buf.toString("utf-8");
       // 只改首行 header 的 cwd 为本机路径（避免 pi 在旧机器路径上跑），其余行原样
-      const text = readFileSync(s.path, "utf-8");
-      const nl = text.indexOf("\n");
-      const head = nl < 0 ? text : text.slice(0, nl);
-      const rest = nl < 0 ? "" : text.slice(nl);
-      let out = text;
       try {
+        const nl = out.indexOf("\n");
+        const head = nl < 0 ? out : out.slice(0, nl);
+        const rest = nl < 0 ? "" : out.slice(nl);
         const header = JSON.parse(head) as Record<string, unknown>;
         if (header.type === "session") {
           const cwd = ctx.sessionManager.getCwd();
@@ -73,49 +87,44 @@ async function restoreArchived(
       ctx.ui.notify(`Local session ${s.fileName} already exists, switching to it (not the archived copy)`, "warning");
     }
   } catch (e) {
-    ctx.ui.notify(`Copy failed: ${errMsg(e)}`, "error");
+    ctx.ui.notify(`Restore failed (needs network): ${errMsg(e)}`, "error");
     return false;
   }
   try {
     await ctx.switchSession(dest);
   } catch {
-    ctx.ui.notify(`Copied to local sessions, use /resume (${entryLabel(s)})`, "info");
+    ctx.ui.notify(`Copied to local sessions, use /resume (${s.fileName})`, "info");
     return false;
   }
-  ctx.ui.notify(`Restored: ${entryLabel(s)}`, "info");
+  ctx.ui.notify(`Restored: ${s.fileName}`, "info");
   return true;
 }
 
-/** 删除：confirm 确认 → unlinkSync（git 可恢复）。返回是否已删除 */
-async function deleteArchived(
-  ctx: ExtensionCommandContext,
-  s: ArchivedSession,
-): Promise<boolean> {
-  const ok = await ctx.ui.confirm("Delete session archive", "Delete this archive (git recoverable). Confirm?");
-  if (!ok) return false;
-  try {
-    unlinkSync(s.path);
-  } catch (e) {
-    ctx.ui.notify(`Delete failed: ${errMsg(e)}`, "error");
-    return false;
-  }
-  ctx.ui.notify("Archive deleted", "info");
-  return true;
-}
-
-/** 重命名：追加 session_info 行（流式覆盖，解析取最新一条），返回是否成功。
- * 若目标归档就是当前会话（文件名匹配），联动 ctx.setSessionName 同步
- * 当前会话名（否则下次退出归档会被本地文件覆盖，名字被冲掉）。 */
+/** 重命名：gitShow 拉内容 → 追加 session_info → hash-object + update-index + commit。 */
 async function renameArchived(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
-  s: ArchivedSession,
+  s: ArchivedMeta,
 ): Promise<boolean> {
-  const name = ((await ctx.ui.input("Session name (empty to cancel)", s.name ?? "")) ?? "").trim();
-  if (!name) return false; // 取消/空名
+  const name = ((await ctx.ui.input("Session name (empty to cancel)", s.fileName)) ?? "").trim();
+  if (!name) return false;
+  const repo = loadConfig().repoPath;
   try {
+    // 追加 session_info（流式覆盖）→ 直写 git（sessions/ 不在工作区）
+    const buf = await gitShow(repo, "origin/main", s.path, gitOpts());
     const record = { type: "session_info", name };
-    appendFileSync(s.path, `${JSON.stringify(record)}\n`, "utf-8");
+    const updated = `${buf.toString("utf-8")}${JSON.stringify(record)}\n`;
+    const tmp = join(repo, ".git", `rename-${s.fileName}.tmp`);
+    writeFileSync(tmp, updated, "utf-8");
+    const blob = await gitHashObject(repo, tmp, gitOpts());
+    await gitUpdateIndexCacheInfo(repo, s.path, blob, gitOpts());
+    await gitIn(repo, ["commit", "-m", `rename session ${s.fileName}`], gitOpts());
+    // 推送（失败静默，下次同步补）
+    try {
+      await gitIn(repo, ["push"], gitOpts());
+    } catch {
+      // push 失败不阻断（内容已本地提交）
+    }
     // 当前会话的归档：联动改本机会话名（立即生效 + 触发 session_info_changed 重绘卡片）
     let isCurrent = false;
     try {
@@ -134,15 +143,39 @@ async function renameArchived(
       }
     }
   } catch (e) {
-    ctx.ui.notify(`Rename failed: ${errMsg(e)}`, "error");
+    ctx.ui.notify(`Rename failed (needs network): ${errMsg(e)}`, "error");
     return false;
   }
   ctx.ui.notify(`Renamed to: ${name}`, "info");
   return true;
 }
 
+/** 删除：git update-index --force-remove + commit（git 历史可恢复） */
+async function deleteArchived(
+  ctx: ExtensionCommandContext,
+  s: ArchivedMeta,
+): Promise<boolean> {
+  const ok = await ctx.ui.confirm("Delete session archive", "Delete this archive (git recoverable). Confirm?");
+  if (!ok) return false;
+  const repo = loadConfig().repoPath;
+  try {
+    await gitIndexRemove(repo, s.path, gitOpts());
+    await gitIn(repo, ["commit", "-m", `delete session ${s.fileName}`], gitOpts());
+    try {
+      await gitIn(repo, ["push"], gitOpts());
+    } catch {
+      // push 失败静默
+    }
+  } catch (e) {
+    ctx.ui.notify(`Delete failed: ${errMsg(e)}`, "error");
+    return false;
+  }
+  ctx.ui.notify("Archive deleted", "info");
+  return true;
+}
+
 export default function (pi: ExtensionAPI) {
-  // /sessions：浏览仓库存档会话，一键恢复到本机并切换
+  // /dpi-sessions：浏览仓库存档会话（git 元数据），一键恢复到本机并切换
   registerDpiCommand(pi, "dpi-sessions", {
     description: "Browse archived sessions (vim nav: j/k, gg/G, / filter), restore and switch",
     handler: async (_args, ctx) => {
@@ -152,10 +185,16 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const repo = cfg.repoPath;
-      // 配置文件可被手工编辑，防御路径穿越：agent 名只允许纯目录名
       const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
 
-      const archived = scanArchived(repo);
+      // 纯在线：先兜底 fetch 一次（3 秒监听已维护 origin/main，这里确保打开时最新）
+      try {
+        await gitIn(repo, ["fetch", "origin"], { noAuth: true, timeoutMs: 8000 });
+      } catch {
+        // fetch 失败：可能离线，列表用上次 origin/main 状态
+      }
+
+      const archived = await scanArchivedMeta(repo);
       if (archived.length === 0) {
         ctx.ui.notify("No archived sessions yet (/dpi-record on archives on exit)", "info");
         return;
@@ -172,7 +211,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // vim 风格选择器（c 键切换 agent 筛选）；选中后走恢复/删除子菜单
+      // vim 风格选择器（c 键切换 agent 筛选）；选中后懒加载名字 + 操作子菜单
       let archivedNow = archived;
       let onlyCurrent = false;
       for (;;) {
@@ -182,7 +221,9 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
         if (!picked) return; // 取消/完成
-        const action = await ctx.ui.select(`会话操作 — ${entryLabel(picked)}`, [
+        // 懒加载名字（拉单个 blob 解析 session_info）——失败回退文件名
+        const name = (await fetchArchivedName(repo, picked.path)) || picked.fileName;
+        const action = await ctx.ui.select(`Session — ${name}`, [
           RESTORE_ITEM,
           RENAME_ITEM,
           DELETE_ITEM,
@@ -194,13 +235,14 @@ export default function (pi: ExtensionAPI) {
         }
         if (action === RENAME_ITEM) {
           if (await renameArchived(pi, ctx, picked)) {
-            archivedNow = scanArchived(repo); // 重扫刷新列表（显示新名字）
+            archivedNow = await scanArchivedMeta(repo); // 重扫刷新列表
+            if (archivedNow.length === 0) return;
           }
           continue;
         }
         if (action === DELETE_ITEM) {
           if (await deleteArchived(ctx, picked)) {
-            archivedNow = scanArchived(repo); // 重扫刷新，支持连续删除
+            archivedNow = await scanArchivedMeta(repo); // 重扫刷新，支持连续删除
             if (archivedNow.length === 0) return;
           }
           continue;

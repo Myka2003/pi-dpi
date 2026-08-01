@@ -57,3 +57,75 @@ export async function git(args: string[], opts: GitOptions = {}) {
     timeout: opts.timeoutMs ?? GIT_TIMEOUT,
   });
 }
+
+// ---------- 按需会话存取辅助（稀疏存储模型） ----------
+
+export interface GitLsEntry {
+  path: string;
+  mode: string;
+  type: string;
+  blob: string;
+}
+
+/** git ls-tree -r：列 tree 下条目（纯元数据；不能用 --long——partial clone 下
+ * size 需要拉 blob 会触发 lazy fetch，认证失败则整体失败） */
+export async function gitLsTree(
+  repo: string,
+  treeish: string,
+  path: string,
+  opts: GitOptions = {},
+): Promise<GitLsEntry[]> {
+  const { stdout } = await gitIn(
+    repo,
+    ["ls-tree", "-r", treeish, "--", path],
+    { ...opts, timeoutMs: opts.timeoutMs ?? GIT_TIMEOUT },
+  );
+  const out: GitLsEntry[] = [];
+  for (const line of stdout.split("\n")) {
+    // 格式: <mode> <type> <blob>\t<path>
+    const m = /^(\S+) (\S+) (\S+)\t(.+)$/.exec(line);
+    if (m) out.push({ mode: m[1], type: m[2], blob: m[3], path: m[4] });
+  }
+  return out;
+}
+
+/** git show <treeish>:<path>：按需拉取 blob（partial clone 下自动 lazy fetch）。
+ * 会话 JSONL 为 UTF-8 文本，utf8 stdout → Buffer 无损。 */
+export async function gitShow(
+  repo: string,
+  treeish: string,
+  path: string,
+  opts: GitOptions = {},
+): Promise<Buffer> {
+  const { stdout } = await gitIn(repo, ["show", `${treeish}:${path}`], opts);
+  return Buffer.from(stdout, "utf-8");
+}
+
+/** git hash-object -w：把文件写入对象库（不触碰工作区/index） */
+export async function gitHashObject(
+  repo: string,
+  file: string,
+  opts: GitOptions = {},
+): Promise<string> {
+  const { stdout } = await gitIn(repo, ["hash-object", "-w", file], opts);
+  return stdout.trim();
+}
+
+/** git update-index --add --cacheinfo：把 blob 登记进 index（工作区可无此文件） */
+export async function gitUpdateIndexCacheInfo(
+  repo: string,
+  path: string,
+  blob: string,
+  opts: GitOptions = {},
+): Promise<void> {
+  await gitIn(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], opts);
+}
+
+/** git update-index --force-remove：从 index 移除路径（工作区可无此文件） */
+export async function gitIndexRemove(
+  repo: string,
+  path: string,
+  opts: GitOptions = {},
+): Promise<void> {
+  await gitIn(repo, ["update-index", "--force-remove", path], opts);
+}
