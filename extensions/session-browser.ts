@@ -222,13 +222,8 @@ export default function (pi: ExtensionAPI) {
       const repo = cfg.repoPath;
       const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
 
-      // 纯在线：先兜底 fetch 一次（3 秒监听已维护 origin/main，这里确保打开时最新）
-      try {
-        await gitIn(repo, ["fetch", "origin"], { noAuth: true, timeoutMs: 8000 });
-      } catch {
-        // fetch 失败：可能离线，列表用上次 origin/main 状态
-      }
-
+      // 列表本地化：3 秒监听已后台维护 origin/main（最多滞后 3 秒），
+      // 打开不再同步 fetch——ls-tree + 名字索引全本地，毫秒级显示
       const archived = await scanArchivedMeta(repo);
       if (archived.length === 0) {
         ctx.ui.notify("No archived sessions yet (/dpi-record on archives on exit)", "info");
