@@ -235,10 +235,9 @@ export default function (pi: ExtensionAPI) {
     const root = sessionsRoot();
     if (!root) return;
     migrateLegacySessions(root);
-    // 启动定时归档：立即一次（补上次未归档）+ 每 15 分钟
+    // 启动 15 分钟定时归档（与 /dpi-save 同一实现；无启动补归档——最简设计）
     if (archiveTimer) clearInterval(archiveTimer);
     lastArchivedKey = "";
-    void archiveSession(ctx).catch(() => {}); // 定时路径静默
     archiveTimer = setInterval(() => void archiveSession(ctx).catch(() => {}), ARCHIVE_INTERVAL);
   });
 
