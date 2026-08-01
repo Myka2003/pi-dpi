@@ -55,9 +55,10 @@ Full flow:
    registry) — undeclared skills never enter a session. This is dpi's skill isolation.
 7. **Instant effect**: auto `/reload` — agent card, skills, prompts available immediately.
 
-No repo yet? Bind a local path (`/dpi-agent-login ~/srv/agents`) — pi-dpi bootstraps a
-minimal content repo for you. Or fork the starter template:
-<https://github.com/oc101363-creator/pi-dpi/tree/main/templates/content-repo>.
+No repo yet? `/dpi-agent-login` (no argument) guides you: it offers to
+**initialize a local content repo** for you (zero-config, single machine) or shows the
+forkable starter template (<https://github.com/oc101363-creator/pi-dpi/tree/main/templates/content-repo>)
+for multi-machine sync later.
 
 ### Remote Type Matrix
 

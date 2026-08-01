@@ -252,7 +252,7 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
     }
   }
 
-  // 1. 仓库地址
+  // 1. 仓库地址：无参数时先问「有没有仓库」——普通用户首次使用没有自己的内容仓库
   let input = (args ?? "").trim();
   if (!input) {
     if (!ctx.hasUI) {
@@ -262,7 +262,48 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
       );
       return;
     }
-    input = ((await ctx.ui.input("Content repo URL", "github.com/oc101363-creator/Agent")) ?? "").trim();
+    // 首启引导：有仓库 / 没有（本地初始化）/ 没有（看模板说明）
+    const HAVE_REPO = "I have a content repo URL";
+    const NO_REPO_LOCAL = "No repo — initialize a local content repo here";
+    const NO_REPO_TEMPLATE = "No repo — show me the starter template";
+    const first = await ctx.ui.select("Do you have a content repo yet?", [
+      HAVE_REPO,
+      NO_REPO_LOCAL,
+      NO_REPO_TEMPLATE,
+    ]);
+    if (first === undefined) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    if (first === NO_REPO_TEMPLATE) {
+      ctx.ui.notify(
+        "Fork the starter template, then run /dpi-agent-login again with your fork: https://github.com/oc101363-creator/pi-dpi/tree/main/templates/content-repo",
+        "info",
+      );
+      return;
+    }
+    if (first === NO_REPO_LOCAL) {
+      // 本地初始化：绑到默认 repoPath 并 bootstrap（git init，单机立即可用）
+      const localPath = defaultConfig().repoPath;
+      const { created } = ensureContentRepo(localPath);
+      saveConfig({
+        repoUrl: localPath,
+        remoteKind: "local",
+        repoPath: localPath,
+        branch: "main",
+        proxy: "",
+      });
+      ensurePackageInSettings(localPath);
+      syncExtensionFilter(loadConfig());
+      ctx.ui.notify(
+        `Bound to local content repo at ${localPath}${created ? " (initialized)" : ""}. Reloading…`,
+        "info",
+      );
+      await ctx.reload();
+      return;
+    }
+    // 有仓库：通用 placeholder（不再暴露作者自己的仓库地址）
+    input = ((await ctx.ui.input("Content repo URL", "github.com/your-name/your-agent-world")) ?? "").trim();
     if (!input) {
       ctx.ui.notify("Cancelled", "info");
       return;

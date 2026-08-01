@@ -23,9 +23,17 @@ import { ensureRepoDeps, loadConfig, syncExtensionFilter, syncStrictSkills } fro
 export default function (pi: ExtensionAPI) {
   // 启动自愈：内容仓库依赖安装 + 扩展过滤器对齐 agent 声明 + 技能严格模式
   // （均幂等，无改动不写盘；依赖安装阻塞式保证本次会话扩展可用）
-  pi.on("session_start", async () => {
+  pi.on("session_start", async (event, ctx) => {
     const cfg = loadConfig();
-    if (cfg.repoUrl) ensureRepoDeps(cfg.repoPath);
+    if (cfg.repoUrl) {
+      ensureRepoDeps(cfg.repoPath);
+    } else if (event.reason === "startup") {
+      // 普通用户首启：未绑定内容仓库时给引导提示（只在 pi 启动时，reload 不重复打扰）
+      ctx.ui.notify(
+        "pi-dpi: no content repo bound yet. Run /dpi-agent-login to get started (no repo? it can initialize one for you).",
+        "warning",
+      );
+    }
     syncExtensionFilter(cfg);
     syncStrictSkills();
   });

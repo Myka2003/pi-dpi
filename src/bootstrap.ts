@@ -4,6 +4,7 @@
  * 与注册表骨架；已存在结构则不动作（幂等）。
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展入口）。
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -32,6 +33,11 @@ export function ensureContentRepo(repoPath: string): { created: boolean } {
     }
     mkdirSync(join(repoPath, "agents", "coder"), { recursive: true });
     for (const d of SKEL_DIRS) mkdirSync(join(repoPath, d), { recursive: true });
+    try {
+      execFileSync("git", ["init"], { cwd: repoPath, stdio: "ignore" });
+    } catch {
+      // git 不可用则跳过（本地单机仍可用，远端同步不可用）
+    }
     writeFileSync(join(repoPath, "agents", "coder", "SYSTEM.md"), DEFAULT_SYSTEM_MD);
     writeFileSync(
       join(repoPath, "agents", "coder", "agent.json"),
