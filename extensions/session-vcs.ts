@@ -25,16 +25,18 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
   existsSync,
   mkdirSync,
-  statSync,
   readFileSync,
   readdirSync,
   renameSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { writeSaveState } from "../src/save-state.ts";
+import { setSessionNameInIndex } from "../src/session-index.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 /**
@@ -122,7 +124,10 @@ export default function (pi: ExtensionAPI) {
   let lastArchivedKey = ""; // 会话文件 mtime:size，避免空归档
   let archiveTimer: ReturnType<typeof setInterval> | null = null;
 
-  async function archiveSession(ctx: ExtensionContext): Promise<void> {
+  async function archiveSession(
+    ctx: ExtensionContext,
+    opts: { force?: boolean; name?: string } = {},
+  ): Promise<void> {
     try {
       const file = ctx.sessionManager.getSessionFile();
       const cfg = loadConfig();
@@ -130,18 +135,35 @@ export default function (pi: ExtensionAPI) {
       if (!file || !existsSync(file)) return;
       const st = statSync(file);
       const key = `${st.mtimeMs}:${st.size}`;
-      if (key === lastArchivedKey) return; // 无变化不空提交
+      if (!opts.force && key === lastArchivedKey) return; // 定时路径：无变化不空提交
       repairSessionFile(file);
       const relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
-      const blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
+      let blob: string;
+      if (opts.name) {
+        // 主动命名保存：内容追加 session_info（临时文件写入后 hash）
+        const content = `${readFileSync(file, "utf-8")}${JSON.stringify({ type: "session_info", name: opts.name })}\n`;
+        const tmp = join(cfg.repoPath, ".git", `save-${Date.now()}.tmp`);
+        writeFileSync(tmp, content, "utf-8");
+        blob = await gitHashObject(cfg.repoPath, tmp, { noAuth: true, timeoutMs: 8000 });
+        try {
+          unlinkSync(tmp);
+        } catch {
+          // 清理失败静默
+        }
+      } else {
+        blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
+      }
       await gitUpdateIndexCacheInfo(cfg.repoPath, relPath, blob, {
         noAuth: true,
         timeoutMs: 8000,
       });
-      await gitIn(cfg.repoPath, ["commit", "-m", "[sync] archive session"], {
-        noAuth: true,
-        timeoutMs: 8000,
-      });
+      if (opts.name) setSessionNameInIndex(cfg.repoPath, relPath, opts.name); // 名字索引同步
+      await gitIn(cfg.repoPath, ["add", "session-index.json"], { noAuth: true, timeoutMs: 8000 });
+      await gitIn(
+        cfg.repoPath,
+        ["commit", "-m", opts.name ? `save session ${opts.name}` : "[sync] archive session"],
+        { noAuth: true, timeoutMs: 8000 },
+      );
       try {
         await gitIn(cfg.repoPath, ["push"], gitAuthOpts(15000)); // 推送（私有仓库带 token）
       } catch {
@@ -207,6 +229,16 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         ctx.ui.notify(`Repair failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
+    },
+  });
+
+  // /dpi-save：主动存档（Ctrl+S 式）——立即保存当前会话，带参数即命名保存点
+  registerDpiCommand(pi, "dpi-save", {
+    description: "Save current session to archive now; with a name = named savepoint",
+    handler: async (args, ctx) => {
+      const name = (args ?? "").trim();
+      await archiveSession(ctx, { force: true, name: name || undefined });
+      ctx.ui.notify(name ? `Saved: ${name}` : "Session saved", "info");
     },
   });
 
