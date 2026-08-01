@@ -393,3 +393,10 @@ export function sanitizeSessionForRestore(text: string): string {
   }
   return kept.join("\n") + "\n";
 }
+
+/** 文件名时间戳 → 短日期 "MM-DD HH:mm"（列表标题用，代替长文件名） */
+export function formatShortDate(fileName: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/.exec(fileName);
+  if (!m) return fileName.slice(0, 12);
+  return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+}

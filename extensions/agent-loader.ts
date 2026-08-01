@@ -124,24 +124,11 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     );
   });
   const prompts = readPrompts(join(repo, "agents", agent, "prompts"));
-  // 当前会话：名字（/dpi 或 pi 的 /name 设置）+ 文件名
-  let sessionName = "";
-  let sessionFile = "";
-  try {
-    sessionName = ctx.sessionManager.getSessionName() ?? "";
-    sessionFile = ctx.sessionManager.getSessionFile() ?? "";
-    sessionFile = sessionFile.split("/").pop() ?? "";
-  } catch {
-    // 会话信息不可用不阻断卡片
-  }
 
   ctx.ui.setWidget("agent-world", (_tui, theme) => {
     const section = (name: string, body: string) =>
       `${theme.fg("mdHeading", `[${name}]`)}\n${theme.fg("dim", `  ${body}`)}`;
-    const sections = [
-      section("Agent", title ? `${agent} — ${title}` : agent),
-      section("Session", sessionName ? `${sessionName} · ${sessionFile}` : sessionFile || "(none)"),
-    ];
+    const sections = [section("Agent", title ? `${agent} — ${title}` : agent)];
     if (skills.length > 0) sections.push(section("Skills", skills.join(", ")));
     if (extensions.length > 0) sections.push(section("Extensions", extensions.join(", ")));
     if (prompts.length > 0) sections.push(section("Prompts", prompts.join(", ")));

@@ -261,7 +261,13 @@ export default function (pi: ExtensionAPI) {
       let archivedNow = archived;
       let onlyCurrent = false;
       for (;;) {
-        const picked = await showSessionPicker(ctx, archivedNow, agent, onlyCurrent);
+        let curFile = "";
+        try {
+          curFile = (ctx.sessionManager.getSessionFile() ?? "").split("/").pop() ?? "";
+        } catch {
+          curFile = "";
+        }
+        const picked = await showSessionPicker(ctx, archivedNow, agent, onlyCurrent, curFile);
         if (picked === "cycle-filter") {
           onlyCurrent = !onlyCurrent;
           continue;

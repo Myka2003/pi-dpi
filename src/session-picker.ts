@@ -11,7 +11,16 @@
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ArchivedMeta } from "./sessions-shared.ts";
+import { formatShortDate } from "./sessions-shared.ts";
 import { showVimListPicker, type VimListItem } from "./vim-list-picker.ts";
+
+/** 大小格式化：12.3MB / 1.2KB / - */
+function fmtSize(size: number): string {
+  if (size <= 0) return "-";
+  return size >= 1024 * 1024
+    ? `${(size / 1024 / 1024).toFixed(1)}MB`
+    : `${Math.max(1, Math.round(size / 1024))}KB`;
+}
 
 /** 选择结果：会话 | "cycle-filter"（要求切换 agent 筛选后重开） | undefined（取消） */
 export type SessionPickerResult = ArchivedMeta | "cycle-filter" | undefined;
@@ -22,20 +31,22 @@ export function showSessionPicker(
   entries: ArchivedMeta[],
   currentAgent: string,
   onlyCurrent: boolean,
+  currentSessionFile = "",
 ): Promise<SessionPickerResult> {
+  // KISS 布局：大小紧跟 agent（永远可见），标题用名字或短日期（不显示长文件名），
+  // 当前会话置顶项加 * 标记（视觉区分）
   const items: VimListItem<ArchivedMeta>[] = entries
     .filter((s) => !onlyCurrent || s.agent === currentAgent)
-    .map((s) => ({
-      id: s.fileName, // 文件名唯一，作稳定 id
-      label: s.name ? `[${s.agent}] ${s.name} · ${s.fileName}` : `[${s.agent}] ${s.fileName}`,
-      meta:
-        s.size > 0
-          ? s.size >= 1024 * 1024
-            ? `${(s.size / 1024 / 1024).toFixed(1)}MB`
-            : `${Math.max(1, Math.round(s.size / 1024))}KB`
-          : undefined,
-      data: s,
-    }));
+    .map((s) => {
+      const isCurrent = currentSessionFile !== "" && s.fileName === currentSessionFile;
+      const title = s.name ? s.name : formatShortDate(s.fileName);
+      return {
+        id: s.fileName, // 文件名唯一，作稳定 id
+        label: `${isCurrent ? "* " : "  "}[${s.agent}] ${fmtSize(s.size)} · ${title}`,
+        meta: isCurrent ? "current" : undefined,
+        data: s,
+      };
+    });
 
   return showVimListPicker(ctx, {
     title: onlyCurrent ? `Session Archive — ${currentAgent}` : "Session Archive",
