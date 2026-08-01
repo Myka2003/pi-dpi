@@ -74,6 +74,17 @@ function agentTitle(repo: string, agent: string): string {
   }
 }
 
+// 状态栏样式（suckless 风格：dim 整体 + 状态符号彩色，贴合 pi footer）
+const ANSI = { dim: "\x1b[2m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m", reset: "\x1b[0m" };
+
+/** sync 短状态着色：✓绿 / ✗红 / ⚠黄（ANSI 在 footer 渲染保留） */
+function styleSync(short: string): string {
+  if (short.includes("✓")) return short.replace("✓", `${ANSI.green}✓${ANSI.reset}`);
+  if (short.includes("✗")) return short.replace("✗", `${ANSI.red}✗${ANSI.reset}`);
+  if (short.includes("⚠")) return short.replace("⚠", `${ANSI.yellow}⚠${ANSI.reset}`);
+  return short;
+}
+
 // Sync 段缓存：pendingCommits 是 git 子进程（慢），只在会话生命周期点刷新；
 // 面板每轮/定时重绘时用缓存，避免高频 git 调用
 let syncCache = { text: "… 尚无保存记录", short: "sync: ?", detail: "" };
@@ -138,8 +149,8 @@ function showAgentCard(ctx: ExtensionContext, agent: string): void {
     sections.push(section("Sync", `${syncCache.text}\n  ${remoteSyncLine()}${syncCache.detail ? `\n  ${syncCache.detail}` : ""}`));
     return new Text(sections.join("\n\n"), 0, 0);
   });
-  ctx.ui.setStatus("agent-world", `agent: ${agent}`);
-  ctx.ui.setStatus("dpi-sync", syncCache.short);
+  ctx.ui.setStatus("agent-world", `${ANSI.dim}agent: ${agent}${ANSI.reset}`);
+  ctx.ui.setStatus("dpi-sync", styleSync(syncCache.short));
 }
 
 export default function (pi: ExtensionAPI) {
