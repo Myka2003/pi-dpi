@@ -39,7 +39,7 @@ export function showSessionPicker(
     .filter((s) => !onlyCurrent || s.agent === currentAgent)
     .map((s) => {
       const isCurrent = currentSessionFile !== "" && s.fileName === currentSessionFile;
-      const title = s.name ? s.name : formatShortDate(s.fileName);
+      const title = s.name ? s.name : s.first ? s.first : formatShortDate(s.fileName);
       return {
         id: s.fileName, // 文件名唯一，作稳定 id
         label: `${isCurrent ? "* " : "  "}[${s.agent}] ${fmtSize(s.size)} · ${title}`,

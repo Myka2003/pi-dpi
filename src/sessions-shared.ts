@@ -237,6 +237,28 @@ import { gitLsTree, gitShow } from "./git.ts";
 import { readSessionIndex } from "./session-index.ts";
 import { gitAuthOpts } from "./config.ts";
 
+/** 提取首条非 meta user 消息摘要（列表标题用；归档时本地提取，零 blob 拉取） */
+export function extractFirstUser(text: string, maxLen = 24): string {
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const rec = JSON.parse(t) as Record<string, unknown>;
+      if (rec.type === "message" && !rec.isMeta) {
+        const msg = (rec.message ?? null) as Record<string, unknown> | null;
+        if (msg?.role === "user") {
+          const raw = extractText(msg.content);
+          const cleaned = cleanUserText(raw);
+          return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
+        }
+      }
+    } catch {
+      // 坏行跳过
+    }
+  }
+  return "";
+}
+
 /** 从 JSONL 文本解析最新 session_info 名字（流式覆盖取最后一条） */
 export function parseNameFromText(text: string): string {
   let name = "";
@@ -263,6 +285,7 @@ export interface ArchivedMeta {
   dayLabel: string;
   name: string; // 来自 session-index（多机器同步的名字），无则 ""
   size: number; // 来自 session-index（归档时记录），0 = 未知
+  first: string; // 首条 user 消息摘要（标题回退），无则 ""
 }
 
 /** 文件名时间戳：2026-08-01T00-00-00-000Z_<uuid>.jsonl → Date.parse（连字符代替冒号） */
@@ -295,6 +318,7 @@ export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
         dayLabel,
         name: index[e.path]?.name ?? "",
         size: index[e.path]?.size ?? 0,
+        first: index[e.path]?.first ?? "",
       });
     }
     return out.sort((a, b) => b.sortKey - a.sortKey);

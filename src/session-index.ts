@@ -18,6 +18,8 @@ export interface SessionIndexEntry {
   name: string;
   /** 归档文件大小（字节）——归档时记录，列表直接显示，无需拉 blob */
   size?: number;
+  /** 首条 user 消息摘要（列表标题回退）——归档时本地提取 */
+  first?: string;
 }
 
 export type SessionIndex = Record<string, SessionIndexEntry>;
@@ -60,15 +62,15 @@ export function setSessionNameInIndex(repo: string, path: string, name: string):
   writeSessionIndex(repo, index);
 }
 
-/** 记录归档文件大小（归档时调用；列表显示用，本地 statSync 零成本） */
-export function setSessionSizeInIndex(repo: string, path: string, size: number): void {
+/** 记录归档元数据（大小 + 首条消息摘要；归档时本地提取，零 blob 拉取） */
+export function setSessionMetaInIndex(
+  repo: string,
+  path: string,
+  meta: { size: number; first?: string },
+): void {
   const index = readSessionIndex(repo);
   const prev = index[path];
-  if (prev) {
-    index[path] = { ...prev, size };
-  } else {
-    index[path] = { name: "", size };
-  }
+  index[path] = { ...(prev ?? { name: "" }), size: meta.size, first: meta.first };
   writeSessionIndex(repo, index);
 }
 
