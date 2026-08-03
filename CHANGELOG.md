@@ -3,6 +3,11 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.33] - 2026-08-03
+
+### Fixed
+- GitHub API 探测失败时报告明确错误（403 限速/被拒、超时等），不再误报「No skills/ directory found」
+
 ## [0.8.32] - 2026-08-03
 
 ### Added
