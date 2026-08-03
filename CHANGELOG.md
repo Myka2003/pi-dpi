@@ -3,6 +3,12 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.27] - 2026-08-03
+
+### Fixed
+- `/dpi-sessions`: arrow keys and page navigation now work while `/` filtering is active.
+- Session rows show the latest archive update as relative time again; new archives persist the last message timestamp in `session-index.json`, with filename-time fallback for older entries.
+
 ## [0.8.22] - 2026-08-01
 
 ### Added

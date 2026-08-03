@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ArchivedSession } from "../src/sessions-shared.ts";
+import type { ArchivedMeta, ArchivedSession } from "../src/sessions-shared.ts";
 
 // 不直接依赖 TUI 组件实例化（handleInput 需要 Key 对象），
 // 这里验证 picker 的核心可见列表语义：过滤 + agent 筛选 + 排序
@@ -12,6 +12,24 @@ function mk(agent: string, day: string, cwd: string, msg: string, sortKey: numbe
     dayLabel: day, cwdLabel: cwd, partial: false,
   };
 }
+
+describe("ArchivedMeta 时间字段", () => {
+  it("保留最后更新时间并可回退到文件名时间", () => {
+    const meta: ArchivedMeta = {
+      agent: "coder",
+      path: "sessions/coder/x.jsonl",
+      fileName: "2026-08-01T00-00-00-000Z_x.jsonl",
+      sortKey: Date.parse("2026-08-01T00:00:00Z"),
+      dayLabel: "2026-08-01",
+      name: "",
+      size: 1,
+      first: "hi",
+      updatedAt: Date.parse("2026-08-01T00:09:00Z"),
+    };
+    expect(meta.updatedAt).toBe(Date.parse("2026-08-01T00:09:00Z"));
+    expect(meta.updatedAt || meta.sortKey).toBe(Date.parse("2026-08-01T00:09:00Z"));
+  });
+});
 
 describe("entryTitle 固定格式", () => {
   it("name 优先", () => {

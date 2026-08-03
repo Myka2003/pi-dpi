@@ -231,8 +231,14 @@ export class VimListPicker<T> implements Component {
       return;
     }
 
-    // 搜索模式：可打印字符输入 / 退格 / 回车确认 / Esc 清空退出
+    // 搜索模式：箭头导航仍作用于过滤后的列表；可打印字符继续编辑过滤词。
     if (this.mode === "search") {
+      if (matchesKey(data, Key.down)) return this.state.moveDown();
+      if (matchesKey(data, Key.up)) return this.state.moveUp();
+      if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
+      if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
+      if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
+      if (matchesKey(data, Key.ctrl("u"))) return this.state.moveHalf(false);
       if (data.length === 1 && data >= " " && data !== "\x7f") {
         this.state.setFilter(this.state.filter() + data);
         return;
@@ -334,7 +340,7 @@ export class VimListPicker<T> implements Component {
     const hint =
       this.opts.hint ??
       (this.mode === "search"
-        ? "filtering… Enter confirm · Esc clear"
+        ? "filtering… ↑/↓ nav · Enter confirm · Esc clear"
         : this.opts.mode === "toggle"
           ? "j/k nav · ^D/^U ^F/^B page · gg/G · / filter · Space/Enter toggle · Esc done" +
             (this.opts.actions?.length ? ` · ${this.opts.actions.map((a) => `${a.key} ${a.hint}`).join(" · ")}` : "")

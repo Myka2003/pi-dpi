@@ -11,7 +11,7 @@
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ArchivedMeta } from "./sessions-shared.ts";
-import { formatShortDate } from "./sessions-shared.ts";
+import { formatShortDate, relTime } from "./sessions-shared.ts";
 import { showVimListPicker, type VimListItem } from "./vim-list-picker.ts";
 
 /** 大小格式化：12.3MB / 1.2KB / - */
@@ -43,7 +43,7 @@ export function showSessionPicker(
       return {
         id: s.fileName, // 文件名唯一，作稳定 id
         label: `${isCurrent ? "* " : "  "}[${s.agent}] ${fmtSize(s.size)} · ${title}`,
-        meta: isCurrent ? "current" : undefined,
+        meta: `${relTime(s.updatedAt || s.sortKey)}${isCurrent ? " · current" : ""}`,
         data: s,
       };
     });

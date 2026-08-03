@@ -20,6 +20,8 @@ export interface SessionIndexEntry {
   size?: number;
   /** 首条 user 消息摘要（列表标题回退）——归档时本地提取 */
   first?: string;
+  /** 最后一条消息时间（毫秒）——列表显示会话最新更新时间 */
+  updatedAt?: number;
 }
 
 export type SessionIndex = Record<string, SessionIndexEntry>;
@@ -66,11 +68,16 @@ export function setSessionNameInIndex(repo: string, path: string, name: string):
 export function setSessionMetaInIndex(
   repo: string,
   path: string,
-  meta: { size: number; first?: string },
+  meta: { size: number; first?: string; updatedAt?: number },
 ): void {
   const index = readSessionIndex(repo);
   const prev = index[path];
-  index[path] = { ...(prev ?? { name: "" }), size: meta.size, first: meta.first };
+  index[path] = {
+    ...(prev ?? { name: "" }),
+    size: meta.size,
+    first: meta.first,
+    ...(meta.updatedAt && meta.updatedAt > 0 ? { updatedAt: meta.updatedAt } : {}),
+  };
   writeSessionIndex(repo, index);
 }
 

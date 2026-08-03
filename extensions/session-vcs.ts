@@ -1,20 +1,16 @@
 /**
  * session-vcs：会话落盘存档，按 agent 归档（移植自旧内容仓库 extensions/session-vcs.ts）。
  *
- * - session_shutdown：若 recordSessions 为 true，把 session JSONL 复制进
- *   内容仓库 sessions/<currentAgent>/ 目录，并立即 git add+commit（归档持久化
- *   不依赖与 dpi-sync 的相对执行顺序——pi 的 session_shutdown 按扩展加载顺序
- *   逐个 await，若 dpi-sync 先执行，本次归档要等下次启动才推；这里自提交后
- *   最坏情况只是延迟一个同步周期，不会丢归档）。push 仍留给 dpi-sync。
- * - session_start：一次性迁移旧平铺档——把 <repo>/sessions/ 直属的 *.jsonl
- *   移入 sessions/_legacy/（renameSync，幂等；目录不存在跳过，单个失败容错继续）
- * - /record on|off|status：存档开关，写入 dpi 配置
+ * - session_start：启动 15 分钟定时归档，并迁移旧平铺档——把 <repo>/sessions/ 直属的
+ *   *.jsonl 移入 sessions/_legacy/（renameSync，幂等；目录不存在跳过，单个失败容错继续）
+ * - /dpi-save [name]：立即保存当前会话，可创建命名保存点
+ * - /dpi-record on|off|status：存档开关，写入 dpi 配置
  *
  * 会话自愈（坏消息清理）：
  * 网关 400/429 失败或用户中断（abort）时，pi 会把 content: [] 的空 assistant
  * 消息写入会话文件；此后每次请求都带上它，Anthropic 协议拒绝空消息 → 之后
  * 每一轮都 400，会话"死亡"。这里在两个时机自动清理：
- * - session_shutdown（quit）：归档前清理当前会话文件，归档进仓库的也是干净版
+ * - 定时归档或 /dpi-save：归档前清理当前会话文件，归档进仓库的也是干净版
  * - session_start（new/resume/fork）：清理被替换下去的 previousSessionFile
  * 另有 /session-repair 手动修复当前会话（修的是磁盘文件，重进会话生效）。
  *
@@ -35,7 +31,7 @@ import {
 import { basename, join } from "node:path";
 import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
-import { extractFirstUser } from "../src/sessions-shared.ts";
+import { extractFirstUser, extractLatestTimestamp } from "../src/sessions-shared.ts";
 import { readSaveState, writeSaveState } from "../src/save-state.ts";
 import { setSessionMetaInIndex, setSessionNameInIndex } from "../src/session-index.ts";
 import { errMsg } from "../src/common.ts";
@@ -188,10 +184,12 @@ export default function (pi: ExtensionAPI) {
         timeoutMs: 8000,
       });
       if (opts.name) setSessionNameInIndex(cfg.repoPath, relPath, opts.name); // 名字索引同步
-      // 元数据索引（列表显示）：大小 + 首条消息摘要（本地提取，零 blob 拉取）
+      // 元数据索引（列表显示）：大小 + 首条消息摘要 + 最后更新时间（本地提取，零 blob 拉取）
+      const sessionText = readFileSync(file, "utf-8");
       setSessionMetaInIndex(cfg.repoPath, relPath, {
         size: st.size,
-        first: extractFirstUser(readFileSync(file, "utf-8")),
+        first: extractFirstUser(sessionText),
+        updatedAt: extractLatestTimestamp(sessionText),
       });
       // force 但内容无变化（无名字）：已是最新，无需 commit/push
       if (opts.force && !opts.name) {

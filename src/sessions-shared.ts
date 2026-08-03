@@ -259,6 +259,26 @@ export function extractFirstUser(text: string, maxLen = 24): string {
   return "";
 }
 
+/** 从 JSONL 文本提取最后一条 user/assistant 消息时间（毫秒）。 */
+export function extractLatestTimestamp(text: string): number {
+  let latest = 0;
+  for (const line of text.split("\\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const rec = JSON.parse(t) as Record<string, unknown>;
+      const msg = (rec.message ?? null) as Record<string, unknown> | null;
+      const role = msg?.role;
+      if (rec.type !== "message" || (role !== "user" && role !== "assistant")) continue;
+      const ts = lineTimestamp(rec, msg);
+      if (ts > latest) latest = ts;
+    } catch {
+      // 坏行跳过
+    }
+  }
+  return latest;
+}
+
 /** 从 JSONL 文本解析最新 session_info 名字（流式覆盖取最后一条） */
 export function parseNameFromText(text: string): string {
   let name = "";
@@ -286,6 +306,7 @@ export interface ArchivedMeta {
   name: string; // 来自 session-index（多机器同步的名字），无则 ""
   size: number; // 来自 session-index（归档时记录），0 = 未知
   first: string; // 首条 user 消息摘要（标题回退），无则 ""
+  updatedAt: number; // 最后一条 user/assistant 消息时间（ms），0 = 回退文件名
 }
 
 /** 文件名时间戳：2026-08-01T00-00-00-000Z_<uuid>.jsonl → Date.parse（连字符代替冒号） */
@@ -310,15 +331,17 @@ export async function scanArchivedMeta(repo: string): Promise<ArchivedMeta[]> {
       const m = /^sessions\/([^/]+)\/([^/]+\.jsonl)$/.exec(e.path);
       if (!m) continue;
       const { sortKey, dayLabel } = metaFromFileName(m[2]);
+      const updatedAt = index[e.path]?.updatedAt ?? 0;
       out.push({
         agent: m[1],
         path: e.path,
         fileName: m[2],
-        sortKey,
+        sortKey: updatedAt > 0 ? updatedAt : sortKey,
         dayLabel,
         name: index[e.path]?.name ?? "",
         size: index[e.path]?.size ?? 0,
         first: index[e.path]?.first ?? "",
+        updatedAt,
       });
     }
     return out.sort((a, b) => b.sortKey - a.sortKey);

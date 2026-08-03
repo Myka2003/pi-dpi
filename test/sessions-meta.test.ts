@@ -3,7 +3,11 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanArchivedMeta, fetchArchivedName } from "../src/sessions-shared.ts";
+import {
+  extractLatestTimestamp,
+  scanArchivedMeta,
+  fetchArchivedName,
+} from "../src/sessions-shared.ts";
 
 let repo = "";
 let bare = "";
@@ -36,6 +40,17 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(repo, { recursive: true });
   rmSync(bare, { recursive: true });
+});
+
+describe("extractLatestTimestamp", () => {
+  it("returns the timestamp of the latest message", () => {
+    const text = [
+      '{"type":"session","timestamp":"2026-08-01T00:00:00Z"}',
+      '{"type":"message","timestamp":"2026-08-01T00:01:00Z","message":{"role":"user","content":"hi"}}',
+      '{"type":"message","timestamp":"2026-08-01T00:09:00Z","message":{"role":"assistant","content":"ok"}}',
+    ].join("\\n");
+    expect(extractLatestTimestamp(text)).toBe(Date.parse("2026-08-01T00:09:00Z"));
+  });
 });
 
 describe("scanArchivedMeta", () => {

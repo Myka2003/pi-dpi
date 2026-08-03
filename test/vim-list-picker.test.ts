@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VimListState } from "../src/vim-list-picker.ts";
+import { VimListPicker, VimListState, type VimListItem } from "../src/vim-list-picker.ts";
 
 const items = Array.from({ length: 55 }, (_, i) => ({
   id: `i${i}`,
@@ -87,5 +87,41 @@ describe("VimListState toggle 勾选", () => {
     s.moveUp();
     s.toggleCurrent(); // item-1 取消
     expect(s.checkedIds()).toEqual(["i0", "i2"]);
+  });
+});
+
+
+function makePicker(items: VimListItem<string>[], onResult: (result: unknown) => void) {
+  return new VimListPicker({
+    title: "Sessions",
+    items,
+    mode: "select",
+    theme: { fg: (_color: string, text: string) => text },
+    onResult,
+  });
+}
+
+describe("VimListPicker 搜索导航", () => {
+  it("过滤时上下箭头移动当前选择项", () => {
+    let result: unknown;
+    const picker = makePicker(
+      [
+        { id: "a", label: "alpha", data: "alpha" },
+        { id: "b", label: "beta", data: "beta" },
+        { id: "c", label: "charlie", data: "charlie" },
+      ],
+      (value) => {
+        result = value;
+      },
+    );
+
+    picker.handleInput("/");
+    picker.handleInput("a");
+    picker.handleInput("down");
+    picker.handleInput("down");
+    picker.handleInput("enter");
+    picker.handleInput("enter");
+
+    expect(result).toMatchObject({ action: "pick", item: { id: "c" } });
   });
 });
