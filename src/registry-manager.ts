@@ -43,6 +43,11 @@ export interface RegistryManagerConfig {
     /** 另一侧条目的形态：扩展=目录或文件，技能=目录 */
     entryExists(repo: string, name: string): boolean;
   };
+  /** 列表末尾「+ Add」入口；handler 返回 true 表示安装了东西（重开列表） */
+  addEntry?: {
+    label: string;
+    handler(ctx: ExtensionCommandContext, repo: string, input: string): Promise<boolean>;
+  };
 }
 
 /** 从所有 agent 的指定声明字段中剔除一个名字；返回受影响 agent 数 */
@@ -147,22 +152,47 @@ export async function runRegistryManager(
   for (;;) {
     const registry = rc.scanRegistry(repo);
     const declared = rc.readDeclared(repo, agent);
-    const items: VimListItem<RegistryEntry>[] = registry.map((e) => ({
-      id: e.name,
-      label: e.description ? `${e.name} — ${e.description}` : e.name,
-      checked: declared.includes(e.name),
-      data: e,
-    }));
+    const items: VimListItem<RegistryEntry>[] = [
+      ...registry.map((e) => ({
+        id: e.name,
+        label: e.description ? `${e.name} — ${e.description}` : e.name,
+        checked: declared.includes(e.name),
+        data: e,
+      })),
+      ...(rc.addEntry
+        ? [
+            {
+              id: "__add__",
+              label: `+ ${rc.addEntry.label}`,
+              checked: false,
+              data: { name: "__add__", description: "" } as RegistryEntry,
+            },
+          ]
+        : []),
+    ];
     const res = await showVimListPicker(ctx, {
       title: `${rc.kindLabel} — ${agent} (● declared)`,
       items,
       mode: "toggle",
-      actions: [{ key: "d", id: "delete", hint: "d delete" }],
+      actions: [
+        { key: "d", id: "delete", hint: "d delete" },
+        ...(rc.addEntry ? [{ key: "a", id: "add", hint: `a ${rc.addEntry.label}` }] : []),
+      ],
     });
     if (!res) break; // TUI 不可用/异常
     if (res.action === "delete" && res.item) {
       if (await deleteFlow(ctx, repo, rc, res.item.data.name)) dirty = true;
       continue; // 重开选择器（注册表已变化）
+    }
+    if (res.action === "add" && rc.addEntry) {
+      const input =
+        (await ctx.ui.input(
+          `${rc.addEntry.label} — GitHub URL or npm package`, "",
+        )) ?? "";
+      if (input.trim() && (await rc.addEntry.handler(ctx, repo, input.trim()))) {
+        continue; // 装好了：重开列表（注册表已变化）
+      }
+      continue;
     }
     // cancel / 完成：写回勾选集（无变化则不写）
     const next = res.checked ?? declared;

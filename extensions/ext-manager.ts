@@ -12,8 +12,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { readAgentManifest, writeAgentManifestExtensions } from "../src/config.ts";
+import { readAgentManifest, writeAgentManifestExtensions, loadConfig } from "../src/config.ts";
 import { runRegistryManager, type RegistryManagerConfig } from "../src/registry-manager.ts";
+import { installExtension } from "../src/extension-installer.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 /** 扫描仓库根 extensions/ 注册表：顶层 .ts 文件 + 目录型（index.ts 或 package.json 入口），按名排序 */
@@ -58,13 +59,28 @@ const config: RegistryManagerConfig = {
     companionLabel: "技能",
     entryExists: (repo, name) => existsSync(join(repo, "skills", name, "SKILL.md")),
   },
+  addEntry: {
+    label: "Add extension (GitHub / npm)",
+    handler: async (ctx, repo, input) => installExtension(ctx, repo, input),
+  },
 };
 
 export default function (pi: ExtensionAPI) {
   // /extensions：交互勾选/取消当前 agent 的扩展，或删除注册表扩展
   registerDpiCommand(pi, "dpi-extensions", {
     description: "Manage current agent extensions (toggle/delete registry extensions)",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
+      const a = (args ?? "").trim();
+      // CLI 化：/dpi-extensions add <github-url|npm-pkg> 直接安装
+      if (a.startsWith("add ")) {
+        const cfg = loadConfig();
+        if (!cfg.repoUrl) {
+          ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
+          return;
+        }
+        await installExtension(ctx, cfg.repoPath, a.slice(4).trim());
+        return;
+      }
       await runRegistryManager(ctx, config);
     },
   });

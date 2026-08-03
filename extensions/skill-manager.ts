@@ -16,7 +16,9 @@ import {
   writeAgentManifestSkills,
 } from "../src/config.ts";
 import { runRegistryManager, type RegistryManagerConfig } from "../src/registry-manager.ts";
+import { installSkill } from "../src/skill-installer.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
+import { loadConfig } from "../src/config.ts";
 
 /** 读 skills/<name>/SKILL.md frontmatter 的 description（单行），截断 ~40 字符 */
 function skillDescription(path: string): string {
@@ -72,13 +74,28 @@ const config: RegistryManagerConfig = {
       existsSync(join(repo, "extensions", `${name}.ts`)) ||
       existsSync(join(repo, "extensions", name, "index.ts")),
   },
+  addEntry: {
+    label: "Add skill from GitHub",
+    handler: async (ctx, repo, input) => installSkill(ctx, repo, input),
+  },
 };
 
 export default function (pi: ExtensionAPI) {
   // /skills：交互勾选/取消当前 agent 的技能，或删除注册表技能
   registerDpiCommand(pi, "dpi-skills", {
     description: "Manage current agent skill set (toggle/delete registry skills)",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
+      const a = (args ?? "").trim();
+      // CLI 化：/dpi-skills add <github-url> 直接安装
+      if (a.startsWith("add ")) {
+        const cfg = loadConfig();
+        if (!cfg.repoUrl) {
+          ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
+          return;
+        }
+        await installSkill(ctx, cfg.repoPath, a.slice(4).trim());
+        return;
+      }
       await runRegistryManager(ctx, config);
     },
   });
