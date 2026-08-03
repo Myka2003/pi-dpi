@@ -176,3 +176,35 @@ describe("splitSkillFlag npx 格式兼容", () => {
     expect(r.skillName).toBe("");
   });
 });
+
+describe("API 失败时报错而非误报无目录", () => {
+  let server: Server;
+  let base = "";
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.writeHead(500);
+      res.end("rate limit");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  });
+  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+
+  it("探测请求失败时 notify 明确错误（而非 No skills/ directory found）", async () => {
+    const { installSkillWithBase } = await import("../src/skill-installer.ts");
+    const notices: string[] = [];
+    const fakeCtx = {
+      ui: { notify: (m: string) => notices.push(m), select: async () => undefined, input: async () => undefined },
+    } as never;
+    const ok = await installSkillWithBase(
+      fakeCtx,
+      "unused",
+      "https://github.com/mattpocock/skills --skill handoff",
+      { apiBase: base, rawBase: base, proxy: "" },
+    );
+    expect(ok).toBe(false);
+    expect(notices.some((n) => n.includes("No skills/ directory"))).toBe(false);
+    expect(notices.some((n) => /error|failed|GitHub/i.test(n))).toBe(true);
+  });
+});

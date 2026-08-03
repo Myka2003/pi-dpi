@@ -31,6 +31,15 @@ export interface InstallOpts {
  * - `npx skills add <owner/repo>@<skill>`
  * - 裸 `<repo> [--skill <name>]` / `<owner/repo>@<skill>`
  */
+/** 错误详情：curl 的 stderr（403 限速/被拒给友好提示）优先，回退 message */
+function errDetail(e: unknown): string {
+  const er = e as { stderr?: string; message?: string };
+  const raw = (er.stderr ?? er.message ?? String(e)).trim();
+  if (/403/.test(raw)) return "GitHub API 403 (rate limit or blocked) — try again later";
+  if (/timed? ?out/i.test(raw)) return "request timed out (check proxy/network)";
+  return raw.slice(0, 200);
+}
+
 export function splitSkillFlag(input: string): { repoInput: string; skillName: string } {
   let s = input.trim();
   // 剥掉 npx skills add 前缀（大小写不敏感）
@@ -78,9 +87,21 @@ async function installSkillCore(
     return false;
   }
   const { owner, repo: rname } = src;
-  const branch = await githubDefaultBranch(owner, rname, opts.proxy, opts.apiBase);
+  let branch: string;
+  try {
+    branch = await githubDefaultBranch(owner, rname, opts.proxy, opts.apiBase);
+  } catch (e) {
+    ctx.ui.notify(`GitHub API error for ${owner}/${rname}: ${errDetail(e)}`, "error");
+    return false;
+  }
   // 递归探测所有含 SKILL.md 的目录（支持分类组织仓库，如 skills/<cat>/<name>/）
-  let skills = await githubFindSkills(owner, rname, branch, "skills", opts.proxy, { apiBase: opts.apiBase });
+  let skills: { path: string; name: string }[];
+  try {
+    skills = await githubFindSkills(owner, rname, branch, "skills", opts.proxy, { apiBase: opts.apiBase });
+  } catch (e) {
+    ctx.ui.notify(`Failed to probe ${owner}/${rname}: ${errDetail(e)}`, "error");
+    return false;
+  }
   // --skill 指定：精确匹配目录名；无匹配时报错
   if (wantSkill) {
     const hit = skills.find((c) => c.name === wantSkill);

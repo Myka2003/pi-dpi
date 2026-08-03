@@ -96,7 +96,7 @@ export async function githubDefaultBranch(
   }
 }
 
-/** 列 GitHub 目录（contents API）；失败返回 [] */
+/** 列 GitHub 目录（contents API）。请求失败抛错（调用方区分「空目录」与「网络/限速失败」） */
 export async function githubListDir(
   owner: string,
   repo: string,
@@ -105,18 +105,14 @@ export async function githubListDir(
   proxy = proxyOf(),
   apiBase = "https://api.github.com",
 ): Promise<{ name: string; type: "file" | "dir" }[]> {
-  try {
-    const out = await fetchUrl(
-      `${apiBase}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`,
-      { proxy },
-    );
-    const arr = JSON.parse(out) as { name?: unknown; type?: unknown }[];
-    return arr
-      .filter((e) => typeof e.name === "string" && (e.type === "file" || e.type === "dir"))
-      .map((e) => ({ name: e.name as string, type: e.type as "file" | "dir" }));
-  } catch {
-    return [];
-  }
+  const out = await fetchUrl(
+    `${apiBase}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`,
+    { proxy },
+  );
+  const arr = JSON.parse(out) as { name?: unknown; type?: unknown }[];
+  return arr
+    .filter((e) => typeof e.name === "string" && (e.type === "file" || e.type === "dir"))
+    .map((e) => ({ name: e.name as string, type: e.type as "file" | "dir" }));
 }
 
 /** 拉单个文件（raw）；失败返回 "" */
