@@ -155,3 +155,24 @@ describe("分类仓库 + --skill 指定", () => {
     expect(existsSync(join(repo2, "skills/engineering"))).toBe(false);
   });
 });
+
+describe("splitSkillFlag npx 格式兼容", () => {
+  it("剥掉 npx skills add 前缀 + --skill 提取", async () => {
+    const { splitSkillFlag } = await import("../src/skill-installer.ts");
+    const r = splitSkillFlag("npx skills add https://github.com/mattpocock/skills --skill handoff");
+    expect(r.repoInput).toBe("https://github.com/mattpocock/skills");
+    expect(r.skillName).toBe("handoff");
+  });
+  it("支持 owner/repo@skill 格式", async () => {
+    const { splitSkillFlag } = await import("../src/skill-installer.ts");
+    const r = splitSkillFlag("npx skills add mattpocock/skills@tdd");
+    expect(r.repoInput).toBe("mattpocock/skills");
+    expect(r.skillName).toBe("tdd");
+  });
+  it("裸仓库不变（无 flag）", async () => {
+    const { splitSkillFlag } = await import("../src/skill-installer.ts");
+    const r = splitSkillFlag("npx skills add https://github.com/vercel-labs/skills");
+    expect(r.repoInput).toBe("https://github.com/vercel-labs/skills");
+    expect(r.skillName).toBe("");
+  });
+});

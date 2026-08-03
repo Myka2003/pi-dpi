@@ -25,11 +25,27 @@ export interface InstallOpts {
   proxy?: string;
 }
 
-/** 输入里拆出 --skill <name> 指定（对齐 npx skills add <repo> --skill <name> 语义） */
+/** 输入规范化：剥掉 npx skills add 前缀 + 提取 --skill <name>（对齐 npx skills 语义；
+ * 不引入 npx CLI——解析后仍走纯 GitHub API 安装）。支持：
+ * - `npx skills add <repo> [--skill <name>]`
+ * - `npx skills add <owner/repo>@<skill>`
+ * - 裸 `<repo> [--skill <name>]` / `<owner/repo>@<skill>`
+ */
 export function splitSkillFlag(input: string): { repoInput: string; skillName: string } {
-  const m = /^(.*?)\s+--skill\s*[=:]?\s*([\w.-]+)\s*$/i.exec(input.trim());
-  if (!m) return { repoInput: input.trim(), skillName: "" };
-  return { repoInput: m[1].trim(), skillName: m[2].trim() };
+  let s = input.trim();
+  // 剥掉 npx skills add 前缀（大小写不敏感）
+  s = s.replace(/^npx\s+skills\s+add\s+/i, "");
+  // 提取 --skill <name> 或 --skill=<name>
+  const flag = /\s+--skill\s*[=:]?\s*([\w.-]+)\s*$/i.exec(s);
+  if (flag) {
+    return { repoInput: s.slice(0, flag.index).trim(), skillName: flag[1].trim() };
+  }
+  // owner/repo@skill 格式（npx skills 简写）
+  const at = /^([\w.-]+\/[\w.-]+)@([\w.-]+)$/.exec(s);
+  if (at) {
+    return { repoInput: at[1], skillName: at[2] };
+  }
+  return { repoInput: s, skillName: "" };
 }
 
 /** 多 skill 时用选择器选一个（显示相对路径区分同名）；单个直接返回；取消返回 null */

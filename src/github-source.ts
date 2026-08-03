@@ -55,10 +55,15 @@ export async function fetchUrl(
 ): Promise<string> {
   const secs = Math.max(5, Math.round((opts.timeoutMs ?? 30000) / 1000));
   const args = ["-fsSL", "--max-time", String(secs)];
-  // 忽略环境代理（http_proxy/all_proxy 会把本地流量也代理导致超时）——
-  // 代理完全由 -x 显式控制（proxy="" 即直连，传值即走该代理）
-  args.push("--noproxy", "*");
-  if (opts.proxy) args.push("-x", opts.proxy);
+  // GitHub API 对 curl 默认 UA 返回 403——必须带自定义 User-Agent
+  args.push("-H", "User-Agent: pi-dpi");
+  if (opts.proxy) {
+    // 显式 -x 自动覆盖环境代理（http_proxy 等），无需 --noproxy
+    args.push("-x", opts.proxy);
+  } else {
+    // 直连模式：忽略环境代理（mac 环境 http_proxy 会干扰本地/测试流量）
+    args.push("--noproxy", "*");
+  }
   args.push(url);
   const { stdout } = await execFileP("curl", args, {
     encoding: "utf-8",
