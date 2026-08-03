@@ -3,6 +3,12 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.31] - 2026-08-03
+
+### Added
+- `/dpi-skills add <repo> --skill <name>`：支持分类组织仓库（skills/<cat>/<name>/）精确安装指定 skill
+- 递归探测含 SKILL.md 的目录（多候选选择器显示相对路径，区分同名 skill）
+
 ## [0.8.30] - 2026-08-03
 
 ### Added
