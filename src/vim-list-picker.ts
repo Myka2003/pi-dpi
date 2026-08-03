@@ -120,6 +120,11 @@ export class VimListState<T> {
     return this.filterText;
   }
 
+  /** 搜索/列表标题使用的页码信息 */
+  pageInfoForVisible(): string {
+    return this.pageInfo();
+  }
+
   setFilter(f: string): void {
     this.filterText = f;
     this.pageOffset = 0;
@@ -233,8 +238,8 @@ export class VimListPicker<T> implements Component {
 
     // 搜索模式：箭头导航仍作用于过滤后的列表；可打印字符继续编辑过滤词。
     if (this.mode === "search") {
-      if (matchesKey(data, Key.down)) return this.state.moveDown();
-      if (matchesKey(data, Key.up)) return this.state.moveUp();
+      if (matchesKey(data, Key.down) || data === "j") return this.state.moveDown();
+      if (matchesKey(data, Key.up) || data === "k") return this.state.moveUp();
       if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
       if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
       if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
@@ -314,7 +319,7 @@ export class VimListPicker<T> implements Component {
     // 标题行：模式 + 页码 + 过滤词
     const title =
       this.mode === "search"
-        ? `${this.opts.title} /${state.filter()}▏`
+        ? `${this.opts.title} /${state.filter()}▏（${state.pageInfoForVisible()}）`
         : `${this.opts.title}（${state.pageInfo()}）`;
     lines.push(t.fg("accent", title.slice(0, width)));
 

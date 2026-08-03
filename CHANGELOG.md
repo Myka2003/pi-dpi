@@ -3,6 +3,12 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.28] - 2026-08-03
+
+### Fixed
+- Prevent forked sessions from creating a new timestamped archive every 15-minute save; persist each session's actual archive path and use a stable machine/session fork path.
+- Session list now shows page totals while filtering and accepts `j/k` navigation during filtering.
+
 ## [0.8.27] - 2026-08-03
 
 ### Fixed

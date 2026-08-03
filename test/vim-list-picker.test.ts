@@ -117,8 +117,8 @@ describe("VimListPicker 搜索导航", () => {
 
     picker.handleInput("/");
     picker.handleInput("a");
-    picker.handleInput("down");
-    picker.handleInput("down");
+    picker.handleInput("j");
+    picker.handleInput("j");
     picker.handleInput("enter");
     picker.handleInput("enter");
 

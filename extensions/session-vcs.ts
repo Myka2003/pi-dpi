@@ -18,6 +18,7 @@
  * 回退 _unknown；全部容错，绝不抛异常阻断 pi。
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { hostname } from "node:os";
 import {
   existsSync,
   mkdirSync,
@@ -32,6 +33,7 @@ import { basename, join } from "node:path";
 import { gitAuthOpts, loadConfig, saveConfig } from "../src/config.ts";
 import { gitHashObject, gitIn, gitUpdateIndexCacheInfo } from "../src/git.ts";
 import { extractFirstUser, extractLatestTimestamp } from "../src/sessions-shared.ts";
+import { chooseArchivePath } from "../src/session-archive-path.ts";
 import { readSaveState, writeSaveState } from "../src/save-state.ts";
 import { setSessionMetaInIndex, setSessionNameInIndex } from "../src/session-index.ts";
 import { errMsg } from "../src/common.ts";
@@ -144,24 +146,35 @@ export default function (pi: ExtensionAPI) {
       const key = `${st.mtimeMs}:${st.size}`;
       if (!opts.force && key === lastArchivedKey) return null; // 定时路径：无变化不空提交
       repairSessionFile(file);
-      let relPath = `sessions/${archiveAgentName()}/${basename(file)}`;
-      // 分叉检测：本机上次归档的 blob vs 远端当前——不同说明别机改过（多机器编辑
-      // 同一恢复会话），归档到新路径（时间戳文件名），双方版本都保留不覆盖。
+      const basePath = `sessions/${archiveAgentName()}/${basename(file)}`;
+      const state = readSaveState();
+      const sessionKey = basename(file);
+      const prior = state.archives?.[sessionKey] ??
+        (state.lastArchive?.session === sessionKey ? state.lastArchive : undefined);
+      let relPath = prior?.path ?? basePath;
+      let branched = relPath !== basePath;
+      // 分叉检测：第一次发现远端变更时创建一个副本；后续定时保存继续写该副本。
       try {
-        await gitIn(cfg.repoPath, ["fetch", "origin"], gitAuthOpts()); // 轻量 fetch
+        await gitIn(cfg.repoPath, ["fetch", "origin"], gitAuthOpts());
         const { stdout: remoteBlob } = await gitIn(
           cfg.repoPath,
-          ["rev-parse", `origin/main:${relPath}`],
+          ["rev-parse", `origin/main:${basePath}`],
           { noAuth: true, timeoutMs: 8000 },
         );
-        const prevBlob = readSaveState().lastArchive?.blob ?? "";
-        if (remoteBlob.trim() !== "" && prevBlob !== "" && remoteBlob.trim() !== prevBlob) {
-          const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-          const branchName = `${ts}_${basename(file).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "")}`;
-          relPath = `sessions/${archiveAgentName()}/${branchName}`;
-        }
+        const branchName = `${hostname()}_${sessionKey}`;
+        const chosen = chooseArchivePath({
+          basePath,
+          session: basename(file),
+          previousSession: sessionKey,
+          previousPath: relPath,
+          previousBlob: prior?.blob,
+          remoteBlob: remoteBlob.trim(),
+          branchPath: `sessions/${archiveAgentName()}/${branchName}`,
+        });
+        relPath = chosen.path;
+        branched = chosen.branched;
       } catch {
-        // fetch/对比失败：正常归档（无分叉检测）
+        // fetch/对比失败：沿用已持久化路径，避免继续制造副本
       }
       let blob: string;
       if (opts.name) {
@@ -245,9 +258,14 @@ export default function (pi: ExtensionAPI) {
       writeSaveState({
         lastArchive: {
           time: new Date().toISOString(),
-          session: basename(file),
+          session: sessionKey,
           result: verified && pushed ? "committed" : "copied",
           blob,
+          path: relPath,
+        },
+        archives: {
+          ...(state.archives ?? {}),
+          [sessionKey]: { path: relPath, blob },
         },
       });
       if (!verified) throw new Error("commit verification failed");
@@ -256,7 +274,7 @@ export default function (pi: ExtensionAPI) {
       blob: blob.slice(0, 8),
       relPath,
       pushed,
-      branched: relPath !== `sessions/${archiveAgentName()}/${basename(file)}`,
+      branched,
     };
   }
 
