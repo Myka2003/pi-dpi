@@ -3,6 +3,16 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.32] - 2026-08-03
+
+### Added
+- `/dpi-skills add` 支持完整 `npx skills add <repo> [--skill name]` 命令输入（剥前缀解析，安装仍走纯 GitHub API，不引入 npx CLI）
+- 支持 `owner/repo@skill` 简写
+
+### Fixed
+- GitHub API 403：fetchUrl 带自定义 User-Agent
+- 代理：`--noproxy *` 会禁用 `-x` 显式代理（仅直连模式使用）
+
 ## [0.8.31] - 2026-08-03
 
 ### Added
