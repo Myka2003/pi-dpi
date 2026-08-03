@@ -11,8 +11,11 @@
  *
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展入口，无 default 导出会报错）。
  */
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { loadConfig } from "./config.ts";
+
+const execFileP = promisify(execFile);
 
 export type InstallSource =
   | { kind: "github"; owner: string; repo: string }
@@ -44,16 +47,24 @@ export function parseInstallSource(input: string): InstallSource | null {
   return null;
 }
 
-/** curl 拉取（-fsSL 静默失败即抛错；proxy 为 "" 时不加 -x） */
-export function fetchUrl(
+/** curl 拉取（-fsSL 静默失败即抛错；proxy 为 "" 时不加 -x）。异步——
+ * 同步 execFileSync 会阻塞事件循环，同进程 http server（测试）收不到请求 */
+export async function fetchUrl(
   url: string,
   opts: { proxy?: string; timeoutMs?: number } = {},
-): string {
+): Promise<string> {
   const secs = Math.max(5, Math.round((opts.timeoutMs ?? 30000) / 1000));
   const args = ["-fsSL", "--max-time", String(secs)];
+  // 忽略环境代理（http_proxy/all_proxy 会把本地流量也代理导致超时）——
+  // 代理完全由 -x 显式控制（proxy="" 即直连，传值即走该代理）
+  args.push("--noproxy", "*");
   if (opts.proxy) args.push("-x", opts.proxy);
   args.push(url);
-  return execFileSync("curl", args, { encoding: "utf-8" });
+  const { stdout } = await execFileP("curl", args, {
+    encoding: "utf-8",
+    timeout: opts.timeoutMs ?? 30000,
+  });
+  return stdout;
 }
 
 function proxyOf(): string {
@@ -72,7 +83,7 @@ export async function githubDefaultBranch(
   apiBase = "https://api.github.com",
 ): Promise<string> {
   try {
-    const out = fetchUrl(`${apiBase}/repos/${owner}/${repo}`, { proxy });
+    const out = await fetchUrl(`${apiBase}/repos/${owner}/${repo}`, { proxy });
     const j = JSON.parse(out) as { default_branch?: unknown };
     return typeof j.default_branch === "string" && j.default_branch ? j.default_branch : "main";
   } catch {
@@ -90,7 +101,7 @@ export async function githubListDir(
   apiBase = "https://api.github.com",
 ): Promise<{ name: string; type: "file" | "dir" }[]> {
   try {
-    const out = fetchUrl(
+    const out = await fetchUrl(
       `${apiBase}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`,
       { proxy },
     );
@@ -113,7 +124,7 @@ export async function githubFetchFile(
   rawBase = "https://raw.githubusercontent.com",
 ): Promise<string> {
   try {
-    return fetchUrl(
+    return await fetchUrl(
       `${rawBase}/${owner}/${repo}/${encodeURIComponent(branch)}/${path}`,
       { proxy },
     );
@@ -137,7 +148,8 @@ export async function downloadTree(
     const rel = `${dirPath}/${it.name}`;
     if (it.type === "dir") {
       const sub = await downloadTree(owner, repo, branch, rel, proxy, opts);
-      for (const [k, v] of sub) out.set(k, v);
+      // 递归返回相对子目录的键——合并时补上目录前缀
+      for (const [k, v] of sub) out.set(`${it.name}/${k}`, v);
     } else {
       const content = await githubFetchFile(owner, repo, branch, rel, proxy, opts.rawBase);
       if (content !== "") out.set(rel.slice(dirPath.length + 1), content);
