@@ -3,6 +3,13 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.30] - 2026-08-03
+
+### Added
+- `/dpi-skills` 与 `/dpi-extensions` 一键安装：GitHub 链接自动探测 skill/扩展并入库推送（安装与声明解耦）
+- `/dpi-extensions` 支持 npm 包名（pi install npm + 仓库 package.json 依赖记录，跨机器同步）
+- CLI 化：`/dpi-skills add <url>`、`/dpi-extensions add <url|pkg>`
+
 ## [0.8.29] - 2026-08-03
 
 ### Fixed
