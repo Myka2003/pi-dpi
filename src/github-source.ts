@@ -157,3 +157,41 @@ export async function downloadTree(
   }
   return out;
 }
+
+export interface SkillCandidate {
+  /** 仓库内完整相对路径（如 skills/engineering/tdd） */
+  path: string;
+  /** skill 名（目录名，如 tdd）——可用于 --skill 指定 */
+  name: string;
+}
+
+/** 递归搜索含 SKILL.md 的 skill 目录（支持分类组织仓库，如 skills/<cat>/<name>/）。
+ * 深度上限 5 防恶意深嵌套；失败返回 [] */
+export async function githubFindSkills(
+  owner: string,
+  repo: string,
+  branch: string,
+  dirPath = "skills",
+  proxy = proxyOf(),
+  opts: { apiBase?: string } = {},
+  depth = 0,
+): Promise<SkillCandidate[]> {
+  if (depth > 5) return [];
+  const out: SkillCandidate[] = [];
+  const items = await githubListDir(owner, repo, branch, dirPath, proxy, opts.apiBase);
+  for (const it of items) {
+    const rel = `${dirPath}/${it.name}`;
+    if (it.type === "file") continue;
+    // 目录含 SKILL.md → 是一个 skill
+    const hasSkill = (await githubListDir(owner, repo, branch, rel, proxy, opts.apiBase)).some(
+      (e) => e.type === "file" && e.name === "SKILL.md",
+    );
+    if (hasSkill) {
+      out.push({ path: rel, name: it.name });
+      continue;
+    }
+    // 否则继续递归（分类目录）
+    out.push(...(await githubFindSkills(owner, repo, branch, rel, proxy, opts, depth + 1)));
+  }
+  return out;
+}

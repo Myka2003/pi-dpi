@@ -13,10 +13,10 @@ import { dirname, join } from "node:path";
 import {
   downloadTree,
   githubDefaultBranch,
-  githubListDir,
+  githubFindSkills,
   parseInstallSource,
 } from "./github-source.ts";
-import { commitAndPush, installCommitMsg, safeName } from "./install-common.ts";
+import { commitAndPush, installCommitMsg } from "./install-common.ts";
 import { showVimListPicker, type VimListItem } from "./vim-list-picker.ts";
 
 export interface InstallOpts {
@@ -25,13 +25,25 @@ export interface InstallOpts {
   proxy?: string;
 }
 
-/** 多 skill 时用选择器选一个；单个直接返回；取消返回 null */
+/** 输入里拆出 --skill <name> 指定（对齐 npx skills add <repo> --skill <name> 语义） */
+export function splitSkillFlag(input: string): { repoInput: string; skillName: string } {
+  const m = /^(.*?)\s+--skill\s*[=:]?\s*([\w.-]+)\s*$/i.exec(input.trim());
+  if (!m) return { repoInput: input.trim(), skillName: "" };
+  return { repoInput: m[1].trim(), skillName: m[2].trim() };
+}
+
+/** 多 skill 时用选择器选一个（显示相对路径区分同名）；单个直接返回；取消返回 null */
 async function pickSkill(
   ctx: ExtensionCommandContext,
-  names: string[],
-): Promise<string | null> {
-  if (names.length === 1) return names[0];
-  const items: VimListItem<string>[] = names.map((n) => ({ id: n, label: n, data: n }));
+  candidates: { path: string; name: string }[],
+): Promise<{ path: string; name: string } | null> {
+  if (candidates.length === 1) return candidates[0];
+  const items: VimListItem<{ path: string; name: string }>[] = candidates.map((c) => ({
+    id: c.path,
+    label: c.name,
+    meta: c.path.replace(/^skills\//, ""),
+    data: c,
+  }));
   const res = await showVimListPicker(ctx, { title: "Select skill", items, mode: "select" });
   if (!res || res.action !== "pick" || !res.item) return null;
   return res.item.data;
@@ -43,23 +55,33 @@ async function installSkillCore(
   input: string,
   opts: InstallOpts = {},
 ): Promise<boolean> {
-  const src = parseInstallSource(input);
+  const { repoInput, skillName: wantSkill } = splitSkillFlag(input);
+  const src = parseInstallSource(repoInput);
   if (!src || src.kind !== "github") {
-    ctx.ui.notify("Expected a GitHub URL (e.g. https://github.com/owner/repo)", "error");
+    ctx.ui.notify("Expected a GitHub URL (e.g. https://github.com/owner/repo [--skill name])", "error");
     return false;
   }
   const { owner, repo: rname } = src;
   const branch = await githubDefaultBranch(owner, rname, opts.proxy, opts.apiBase);
-  const skills = (await githubListDir(owner, rname, branch, "skills", opts.proxy, opts.apiBase))
-    .filter((e) => e.type === "dir" && safeName(e.name))
-    .map((e) => e.name);
+  // 递归探测所有含 SKILL.md 的目录（支持分类组织仓库，如 skills/<cat>/<name>/）
+  let skills = await githubFindSkills(owner, rname, branch, "skills", opts.proxy, { apiBase: opts.apiBase });
+  // --skill 指定：精确匹配目录名；无匹配时报错
+  if (wantSkill) {
+    const hit = skills.find((c) => c.name === wantSkill);
+    if (!hit) {
+      ctx.ui.notify(`No skill named "${wantSkill}" found in ${owner}/${rname} (found: ${skills.map((s) => s.name).join(", ") || "none"})`, "error");
+      return false;
+    }
+    skills = [hit];
+  }
   if (skills.length === 0) {
     ctx.ui.notify(`No skills/ directory found in ${owner}/${rname}`, "warning");
     return false;
   }
-  const skillName = await pickSkill(ctx, skills);
-  if (!skillName) return false;
-  const tree = await downloadTree(owner, rname, branch, `skills/${skillName}`, opts.proxy, opts);
+  const chosen = await pickSkill(ctx, skills);
+  if (!chosen) return false;
+  const skillName = chosen.name;
+  const tree = await downloadTree(owner, rname, branch, chosen.path, opts.proxy, opts);
   if (!tree.has("SKILL.md")) {
     ctx.ui.notify(`${skillName} is not a valid skill (missing SKILL.md)`, "error");
     return false;

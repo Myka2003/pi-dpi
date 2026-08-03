@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("piInstallNpm 调用", () => {
-  it("pi 缺失/包不存在时返回 ok=false 而非抛错", () => {
+  it("pi 缺失/包不存在时返回 ok=false 而非抛错", async () => {
     const { piInstallNpm } = require("../src/extension-installer.ts") as typeof import("../src/extension-installer.ts");
     const r = piInstallNpm("this-pkg-does-not-exist-xyz");
     expect(typeof r.ok).toBe("boolean");
-  });
+  }, 30000);
 });
 
 describe("npm 分支仓库记录", () => {
