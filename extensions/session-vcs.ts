@@ -146,6 +146,17 @@ export default function (pi: ExtensionAPI) {
       const key = `${st.mtimeMs}:${st.size}`;
       if (!opts.force && key === lastArchivedKey) return null; // 定时路径：无变化不空提交
       repairSessionFile(file);
+      stage("hashing session…");
+      let blob: string;
+      let tempSavePath = "";
+      if (opts.name) {
+        const content = `${readFileSync(file, "utf-8")}${JSON.stringify({ type: "session_info", name: opts.name })}\n`;
+        tempSavePath = join(cfg.repoPath, ".git", `save-${Date.now()}.tmp`);
+        writeFileSync(tempSavePath, content, "utf-8");
+        blob = await gitHashObject(cfg.repoPath, tempSavePath, { noAuth: true, timeoutMs: 8000 });
+      } else {
+        blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
+      }
       const basePath = `sessions/${archiveAgentName()}/${basename(file)}`;
       const state = readSaveState();
       const sessionKey = basename(file);
@@ -168,6 +179,7 @@ export default function (pi: ExtensionAPI) {
           previousSession: sessionKey,
           previousPath: relPath,
           previousBlob: prior?.blob,
+          currentBlob: blob,
           remoteBlob: remoteBlob.trim(),
           branchPath: `sessions/${archiveAgentName()}/${branchName}`,
         });
@@ -176,21 +188,12 @@ export default function (pi: ExtensionAPI) {
       } catch {
         // fetch/对比失败：沿用已持久化路径，避免继续制造副本
       }
-      let blob: string;
-      if (opts.name) {
-        // 主动命名保存：内容追加 session_info（临时文件写入后 hash）
-        const content = `${readFileSync(file, "utf-8")}${JSON.stringify({ type: "session_info", name: opts.name })}\n`;
-        const tmp = join(cfg.repoPath, ".git", `save-${Date.now()}.tmp`);
-        writeFileSync(tmp, content, "utf-8");
-        blob = await gitHashObject(cfg.repoPath, tmp, { noAuth: true, timeoutMs: 8000 });
+      if (tempSavePath) {
         try {
-          unlinkSync(tmp);
+          unlinkSync(tempSavePath);
         } catch {
           // 清理失败静默
         }
-      } else {
-        stage("hashing session…");
-        blob = await gitHashObject(cfg.repoPath, file, { noAuth: true, timeoutMs: 8000 });
       }
       await gitUpdateIndexCacheInfo(cfg.repoPath, relPath, blob, {
         noAuth: true,

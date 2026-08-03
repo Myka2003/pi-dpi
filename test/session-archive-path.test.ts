@@ -19,6 +19,20 @@ describe("chooseArchivePath", () => {
     });
   });
 
+  it("forks on first upgrade when local content differs from remote", () => {
+    const result = chooseArchivePath({
+      basePath: "sessions/coder/original.jsonl",
+      session: "original.jsonl",
+      previousSession: "original.jsonl",
+      previousPath: "sessions/coder/original.jsonl",
+      currentBlob: "blob-current",
+      remoteBlob: "blob-remote",
+      branchPath: "sessions/coder/new-fork.jsonl",
+    });
+
+    expect(result).toEqual({ path: "sessions/coder/new-fork.jsonl", branched: true });
+  });
+
   it("creates one fork when the base path changed remotely", () => {
     const result = chooseArchivePath({
       basePath: "sessions/coder/original.jsonl",
@@ -26,6 +40,7 @@ describe("chooseArchivePath", () => {
       previousSession: "original.jsonl",
       previousPath: "sessions/coder/original.jsonl",
       previousBlob: "blob-local",
+      currentBlob: "blob-current",
       remoteBlob: "blob-other-machine",
       branchPath: "sessions/coder/new-fork.jsonl",
     });

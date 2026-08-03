@@ -4,6 +4,7 @@ export interface ArchivePathInput {
   previousSession?: string;
   previousPath?: string;
   previousBlob?: string;
+  currentBlob?: string;
   remoteBlob?: string;
   branchPath: string;
 }
@@ -27,6 +28,9 @@ export function chooseArchivePath(input: ArchivePathInput): ArchivePathResult {
     return { path: input.previousPath, branched: true };
   }
   if (input.previousBlob && input.remoteBlob && input.previousBlob !== input.remoteBlob) {
+    return { path: input.branchPath, branched: true };
+  }
+  if (!input.previousBlob && input.currentBlob && input.remoteBlob && input.currentBlob !== input.remoteBlob) {
     return { path: input.branchPath, branched: true };
   }
   return { path: input.basePath, branched: false };

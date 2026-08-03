@@ -3,6 +3,12 @@
 All notable changes to pi-dpi will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.29] - 2026-08-03
+
+### Fixed
+- First-save upgrades now compare the local session blob with the remote base and fork safely when the old state file has no blob.
+- Persist per-session archive paths so forked sessions do not multiply on each timer tick.
+
 ## [0.8.28] - 2026-08-03
 
 ### Fixed
