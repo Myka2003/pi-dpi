@@ -2,6 +2,11 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## [0.8.35] - 2026-08-05
+
+### Fixed
+- Restore the selected gateway provider during initial extension loading, not only after a session event.
+
 ## [0.8.34] - 2026-08-05
 
 ### Added

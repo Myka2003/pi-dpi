@@ -66,6 +66,17 @@ async function useGateway(pi: ExtensionAPI, id: string, ctx: ExtensionCommandCon
 }
 
 export default function (pi: ExtensionAPI): void {
+  const current = loadGatewayState();
+  if (current) {
+    const profile = findProfile(current);
+    if (profile) {
+      const result = applyProfile(pi, profile);
+      if (!result.ok) {
+        // The command path reports the reference name; startup remains non-fatal.
+      }
+    }
+  }
+
   pi.on("session_start", async (_event, ctx) => {
     unregisterActive(pi);
     const current = loadGatewayState();
