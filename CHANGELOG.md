@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to pi-dpi will be documented in this file.
+
+## [0.8.34] - 2026-08-05
+
+### Added
+- Agent repository gateway profiles with `/dpi-gateway list|use|status|clear`.
+- Platform-neutral credential references and dynamic pi provider registration for remote gateways.
+- `ser7-cpa` gateway profile support without changing pi-dpi core provider semantics.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.8.33] - 2026-08-03
