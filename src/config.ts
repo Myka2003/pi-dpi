@@ -39,6 +39,8 @@ export interface DpiConfig {
   currentAgent: string;
   /** 会话存档开关，默认 true */
   recordSessions: boolean;
+  /** 当前选中的通用 gateway profile；空串表示未选择 */
+  currentGateway: string;
 }
 
 const DEFAULTS: DpiConfig = {
@@ -49,6 +51,7 @@ const DEFAULTS: DpiConfig = {
   proxy: "",
   currentAgent: "coder",
   recordSessions: true,
+  currentGateway: "",
 };
 
 /** 旧配置迁移：remoteKind 缺失/非法时按 repoUrl 推断远端类型（推断不出回退 github）。导出供测试。
@@ -143,6 +146,9 @@ export function loadConfig(): DpiConfig {
         cfg.currentAgent = raw.currentAgent;
       }
       if (typeof raw.recordSessions === "boolean") cfg.recordSessions = raw.recordSessions;
+      if (typeof raw.currentGateway === "string" && /^[a-z0-9][a-z0-9-]*$/.test(raw.currentGateway)) {
+        cfg.currentGateway = raw.currentGateway;
+      }
     }
   } catch {
     // 配置文件损坏：整体回退默认

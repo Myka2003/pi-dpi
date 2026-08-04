@@ -217,7 +217,7 @@ async function ensureRepo(
         await gitIn(repoPath, ["sparse-checkout", "init", "--cone"], gitOpts);
         await gitIn(
           repoPath,
-          ["sparse-checkout", "set", "agents", "skills", "extensions", "machines", "docs"],
+          ["sparse-checkout", "set", "agents", "skills", "extensions", "machines", "profiles", "docs"],
           gitOpts,
         );
         migrated = true;
@@ -240,7 +240,7 @@ async function ensureRepo(
   }
   // 稀疏克隆：blob:none（不拉文件内容）+ sparse-checkout 只检出运行时配置目录；
   // sessions/ 永不进工作区（浏览/恢复/归档按需走 git 对象库，见 spec）
-  const SPARSE_DIRS = ["agents", "skills", "extensions", "machines", "docs"];
+  const SPARSE_DIRS = ["agents", "skills", "extensions", "machines", "profiles", "docs"];
   const sparseClone = async (extra: string[]): Promise<void> => {
     await git(["clone", "--filter=blob:none", "--sparse", ...extra, repoUrl, repoPath], {
       ...gitOpts,
