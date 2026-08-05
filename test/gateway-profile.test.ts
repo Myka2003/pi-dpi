@@ -66,9 +66,19 @@ describe("gateway profiles", () => {
   });
 
   it("does not expose missing credential values", () => {
-    expect(resolveCredentialRef("riff-cpa-client-token", {})).toEqual({
+    expect(resolveCredentialRef("riff-cpa-client-token", {}, "/nonexistent/dpi-credentials")).toEqual({
       kind: "missing",
       reason: "credential reference unavailable: riff-cpa-client-token",
     });
+  });
+
+  it("falls back to a user credential command file when no env mapping exists", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dpi-creds-"));
+    writeFileSync(join(dir, "riff-cpa-client-token"), "!security find-generic-password -s riff-cpa-client-token -w");
+    expect(resolveCredentialRef("riff-cpa-client-token", {}, dir)).toEqual({
+      kind: "command",
+      value: "security find-generic-password -s riff-cpa-client-token -w",
+    });
+    rmSync(dir, { recursive: true, force: true });
   });
 });
