@@ -12,6 +12,7 @@ import {
 import { gatewayProviderId, toPiProviderConfig } from "../src/gateway-projection.ts";
 import { clearGatewayState, loadGatewayState, saveGatewayState } from "../src/gateway-state.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
+import { checkGatewayHealth } from "../src/gateway-health.ts";
 
 let activeProviderIds: string[] = [];
 
@@ -44,6 +45,19 @@ function applyProfile(pi: ExtensionAPI, profile: GatewayProfile): { ok: true } |
   return { ok: true };
 }
 
+function formatHealth(profile: GatewayProfile, report: Awaited<ReturnType<typeof checkGatewayHealth>>): string {
+  return [
+    `selected: ${profile.id}`,
+    `baseUrl: ${profile.baseUrl}`,
+    `credentialRef: ${profile.credentialRef}`,
+    `credential: ${report.credential}`,
+    `providers: ${report.providers}`,
+    `models: ${report.models}`,
+    `/models: ${report.endpoint}${report.latencyMs !== undefined ? ` (${report.latencyMs} ms)` : ""}`,
+    ...(report.issues.length ? ["issues:", ...report.issues.map((issue) => `- ${issue}`)] : []),
+  ].join("\n");
+}
+
 function formatProfiles(items: GatewayProfile[], current: string): string {
   if (items.length === 0) return "No gateway profiles found in the bound Agent repository";
   return items
@@ -55,6 +69,11 @@ async function useGateway(pi: ExtensionAPI, id: string, ctx: ExtensionCommandCon
   const profile = findProfile(id);
   if (!profile) {
     ctx.ui.notify(`Unknown gateway: ${id || "(empty)"}`, "error");
+    return;
+  }
+  const health = await checkGatewayHealth(profile);
+  if (!health.ok) {
+    ctx.ui.notify(formatHealth(profile, health), "error");
     return;
   }
   const result = applyProfile(pi, profile);
@@ -107,7 +126,29 @@ export default function (pi: ExtensionAPI): void {
       }
       if (subcommand === "status") {
         const profile = current ? findProfile(current) : undefined;
-        ctx.ui.notify(profile ? `Gateway: ${profile.id}\nEndpoint: ${profile.baseUrl}` : "No gateway selected", "info");
+        if (!profile) {
+          ctx.ui.notify("No gateway selected", "info");
+          return;
+        }
+        const report = await checkGatewayHealth(profile);
+        ctx.ui.notify(formatHealth(profile, report), report.ok ? "info" : "warning");
+        return;
+      }
+      if (subcommand === "doctor") {
+        const items = profiles();
+        if (items.length === 0) {
+          ctx.ui.notify("No gateway profiles found in the bound Agent repository", "info");
+          return;
+        }
+        let allOk = true;
+        const blocks: string[] = [];
+        for (const profile of items) {
+          const report = await checkGatewayHealth(profile);
+          if (!report.ok) allOk = false;
+          const selected = profile.id === current ? " (selected)" : "";
+          blocks.push(`Gateway: ${profile.id}${selected}\n${formatHealth(profile, report).split("\n").slice(1).join("\n")}`);
+        }
+        ctx.ui.notify(blocks.join("\n\n"), allOk ? "info" : "warning");
         return;
       }
       if (subcommand === "clear") {
@@ -124,7 +165,7 @@ export default function (pi: ExtensionAPI): void {
         await useGateway(pi, value, ctx);
         return;
       }
-      ctx.ui.notify("Usage: /dpi-gateway {list|use <id>|status|clear}", "error");
+      ctx.ui.notify("Usage: /dpi-gateway {list|use <id>|status|doctor|clear}", "error");
     },
   });
 }
