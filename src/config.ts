@@ -9,10 +9,14 @@
  */
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -123,32 +127,31 @@ export function machineName(): string {
   }
 }
 
-/** 读取配置；文件缺失/损坏/字段类型错误一律回退默认，绝不抛异常 */
+/** 读取配置；文件缺失/损坏/字段类型错误一律回退默认，绝不抛异常。
+ * 主文件损坏/缺失时回退到备份（config.json.bak），备份也无则整体回退默认。 */
 export function loadConfig(): DpiConfig {
   const cfg = defaultConfig();
   try {
-    if (existsSync(configPath())) {
-      const raw = JSON.parse(readFileSync(configPath(), "utf-8")) as Record<string, unknown>;
-      if (typeof raw.repoUrl === "string") cfg.repoUrl = raw.repoUrl;
-      // remoteKind 白名单校验；缺失/非法一律按 repoUrl 推断，旧配置无缝迁移
-      if (
-        typeof raw.remoteKind === "string" &&
-        (["github", "ssh", "http", "local"] as const).includes(raw.remoteKind as RemoteKind)
-      ) {
-        cfg.remoteKind = raw.remoteKind as RemoteKind;
-      } else {
-        cfg.remoteKind = inferRemoteKind(cfg.repoUrl);
-      }
-      if (typeof raw.repoPath === "string" && raw.repoPath !== "") cfg.repoPath = raw.repoPath;
-      if (typeof raw.branch === "string" && raw.branch !== "") cfg.branch = raw.branch;
-      if (typeof raw.proxy === "string") cfg.proxy = raw.proxy;
-      if (typeof raw.currentAgent === "string" && raw.currentAgent !== "") {
-        cfg.currentAgent = raw.currentAgent;
-      }
-      if (typeof raw.recordSessions === "boolean") cfg.recordSessions = raw.recordSessions;
-      if (typeof raw.currentGateway === "string" && /^[a-z0-9][a-z0-9-]*$/.test(raw.currentGateway)) {
-        cfg.currentGateway = raw.currentGateway;
-      }
+    const raw = readStoredConfig();
+    if (typeof raw.repoUrl === "string") cfg.repoUrl = raw.repoUrl;
+    // remoteKind 白名单校验；缺失/非法一律按 repoUrl 推断，旧配置无缝迁移
+    if (
+      typeof raw.remoteKind === "string" &&
+      (["github", "ssh", "http", "local"] as const).includes(raw.remoteKind as RemoteKind)
+    ) {
+      cfg.remoteKind = raw.remoteKind as RemoteKind;
+    } else {
+      cfg.remoteKind = inferRemoteKind(cfg.repoUrl);
+    }
+    if (typeof raw.repoPath === "string" && raw.repoPath !== "") cfg.repoPath = raw.repoPath;
+    if (typeof raw.branch === "string" && raw.branch !== "") cfg.branch = raw.branch;
+    if (typeof raw.proxy === "string") cfg.proxy = raw.proxy;
+    if (typeof raw.currentAgent === "string" && raw.currentAgent !== "") {
+      cfg.currentAgent = raw.currentAgent;
+    }
+    if (typeof raw.recordSessions === "boolean") cfg.recordSessions = raw.recordSessions;
+    if (typeof raw.currentGateway === "string" && /^[a-z0-9][a-z0-9-]*$/.test(raw.currentGateway)) {
+      cfg.currentGateway = raw.currentGateway;
     }
   } catch {
     // 配置文件损坏：整体回退默认
@@ -168,12 +171,94 @@ export function loadConfig(): DpiConfig {
   return cfg;
 }
 
-/** 合并写入配置（读取-合并-整体覆写） */
-export function saveConfig(patch: Partial<DpiConfig>): DpiConfig {
-  const next = { ...loadConfig(), ...patch };
+/** 磁盘上的原始配置 JSON（含未知字段与 schema，不经过 DpiConfig 字段校验） */
+type StoredConfig = Record<string, unknown>;
+
+/** 备份路径：每次成功写入后刷新，主文件损坏时恢复用 */
+function backupPath(): string {
+  return `${configPath()}.bak`;
+}
+
+/** 写锁目录路径：mkdir 原子性充当互斥量 */
+function lockPath(): string {
+  return `${configPath()}.lock`;
+}
+
+/** 读取某个 JSON 文件为原始对象；缺失/损坏/非对象一律返回 null */
+function readStoredFile(path: string): StoredConfig | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as StoredConfig)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 读取存储的原始配置：主文件优先，损坏/缺失回退备份，两者皆无返回空对象 */
+function readStoredConfig(): StoredConfig {
+  const main = readStoredFile(configPath());
+  if (main) return main;
+  const backup = readStoredFile(backupPath());
+  if (backup) return backup;
+  return {};
+}
+
+/** 获取跨进程写锁（dpi/config.json.lock 目录）；超时后降级为无锁继续。返回释放函数。 */
+function acquireConfigLock(): () => void {
   ensureDpiDir();
-  writeFileSync(configPath(), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-  return next;
+  const started = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lockPath(), { mode: 0o700 });
+      writeFileSync(join(lockPath(), "pid"), `${process.pid}\n`, "utf-8");
+      return () => rmSync(lockPath(), { recursive: true, force: true });
+    } catch {
+      try {
+        if (Date.now() - statSync(lockPath()).mtimeMs > 30_000) {
+          rmSync(lockPath(), { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // 锁恰好消失；重试
+      }
+      if (Date.now() - started > 5_000) return () => {};
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+
+/** 原子写入原始配置：备份旧文件 → 写临时文件 → rename 覆盖 → 刷新备份。
+ * 写失败时主文件保持上一次完整状态不变，备份仍可恢复。 */
+function writeStoredConfig(raw: StoredConfig): void {
+  const release = acquireConfigLock();
+  try {
+    ensureDpiDir();
+    if (existsSync(configPath())) copyFileSync(configPath(), backupPath());
+    const tmp = `${configPath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, `${JSON.stringify({ schema: 1, ...raw }, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, configPath());
+    copyFileSync(configPath(), backupPath());
+  } finally {
+    release();
+  }
+}
+
+/** 合并写入配置（读取原始存储-合并-原子覆写）。
+ * 空串补丁默认不生效（保护已有有效值不被误清），显式清除路径须传 { allowEmpty: true }。 */
+export function saveConfig(
+  patch: Partial<DpiConfig>,
+  options: { allowEmpty?: boolean } = {},
+): DpiConfig {
+  const raw = readStoredConfig();
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (typeof value === "string" && value === "" && options.allowEmpty !== true) continue;
+    raw[key] = value;
+  }
+  writeStoredConfig(raw);
+  return loadConfig();
 }
 
 /** git 远端操作 opts（可能触发 lazy fetch/push 的操作用）：私有仓库带 token，ssh/local 零凭证 */

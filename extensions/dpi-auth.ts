@@ -316,13 +316,16 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
       // 本地初始化：绑到默认 repoPath 并 bootstrap（git init，单机立即可用）
       const localPath = defaultConfig().repoPath;
       const { created } = ensureContentRepo(localPath);
-      saveConfig({
-        repoUrl: localPath,
-        remoteKind: "local",
-        repoPath: localPath,
-        branch: "main",
-        proxy: "",
-      });
+      saveConfig(
+        {
+          repoUrl: localPath,
+          remoteKind: "local",
+          repoPath: localPath,
+          branch: "main",
+          proxy: "",
+        },
+        { allowEmpty: true },
+      );
       ensurePackageInSettings(localPath);
       syncExtensionFilter(loadConfig());
       ctx.ui.notify(
@@ -488,12 +491,14 @@ async function login(args: string, ctx: ExtensionCommandContext): Promise<void> 
     return;
   }
 
-  // 8. 写配置；currentAgent 若在新仓库中不存在则回退到第一个可用 agent
+  // 8. 写配置；currentAgent 若在新仓库中不存在则回退到第一个可用 agent。
+  // allowEmpty: true —— proxy 为 "" 是显式清除路径（No proxy / ssh / local），
+  // 防止旧的代理配置残留影响后续 git 操作。
   const patch: Record<string, unknown> = { repoUrl, remoteKind: kind, repoPath, branch, proxy };
   if (!agents.includes(existing.currentAgent)) {
     patch.currentAgent = agents[0];
   }
-  saveConfig(patch);
+  saveConfig(patch, { allowEmpty: true });
 
   // 声明式关键一步：把内容包路径写进 settings.json packages，
   // 之后技能/提示词/主题由 pi 原生按包规则加载，引擎不再代劳

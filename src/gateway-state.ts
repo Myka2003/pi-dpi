@@ -11,6 +11,6 @@ export function saveGatewayState(id: string): void {
 export function clearGatewayState(): boolean {
   const before = loadGatewayState();
   if (before === "") return false;
-  saveGatewayState("");
+  saveConfig({ currentGateway: "" }, { allowEmpty: true });
   return true;
 }
