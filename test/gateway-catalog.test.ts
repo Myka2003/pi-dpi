@@ -29,3 +29,35 @@ describe("gateway catalog", () => {
     ).rejects.toThrow(/401/);
   });
 });
+
+describe("pi official model catalog priority", () => {
+  it("uses official catalog values when present, rules as fallback", async () => {
+    const storePath = "/tmp/pi-models-store-test.json";
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(storePath, JSON.stringify({
+      deepseek: { models: [
+        { id: "deepseek-v4-flash", api: "openai-completions", contextWindow: 1000000, maxTokens: 384000, reasoning: true },
+      ] },
+    }));
+    const models = await fetchGatewayModels("https://api.example.com/v1", "sk-x", {
+      catalogStorePath: storePath,
+      fetchImpl: async (url, init) => {
+        return new Response(JSON.stringify({ data: [
+          { id: "deepseek-v4-flash" },
+          { id: "gpt-5.6-luna" },
+          { id: "claude-sonnet-4-5" },
+        ] }), { status: 200 });
+      },
+    } as never);
+    const byId = Object.fromEntries(models.map((m) => [m.id, m]));
+    expect(byId["deepseek-v4-flash"].contextWindow).toBe(1000000);
+    expect(byId["deepseek-v4-flash"].maxTokens).toBe(384000);
+    expect(byId["deepseek-v4-flash"].reasoning).toBe(true);
+    expect(byId["deepseek-v4-flash"].api).toBe("openai-completions");
+    // 缓存未命中 → 规则兜底
+    expect(byId["gpt-5.6-luna"].contextWindow).toBe(400000);
+    expect(byId["gpt-5.6-luna"].api).toBe("openai-responses");
+    expect(byId["claude-sonnet-4-5"].contextWindow).toBe(200000);
+    expect(byId["claude-sonnet-4-5"].api).toBeUndefined();
+  });
+});

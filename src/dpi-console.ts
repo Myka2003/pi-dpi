@@ -209,41 +209,21 @@ export async function addGatewayFlow(
     ctx.ui.notify("No content repo bound; add one first (a → repo)", "warning");
     return;
   }
-  const idInput = (
-    (await ctx.ui.input("Gateway id or URL (e.g. sui-xiang or https://sui-xiang.com)", "")) ?? ""
+  // 极简：只问地址 + key；id 从地址自动推导（name = id），管理 UI 以后再设计
+  const urlInput = (
+    (await ctx.ui.input("Gateway base URL (e.g. https://sui-xiang.com)", "")) ?? ""
   ).trim();
-  let id = idInput;
-  let derivedBaseUrl = "";
-  if (looksLikeUrl(idInput)) {
-    const derivedId = deriveGatewayIdFromUrl(idInput);
-    if (derivedId === null) {
-      ctx.ui.notify(
-        `Invalid gateway id: ${idInput} — could not derive an id from that URL (use lowercase letters/digits/dashes, e.g. apimart)`,
-        "error",
-      );
-      return;
-    }
-    id = derivedId;
-    derivedBaseUrl = normalizeGatewayBaseUrl(idInput) ?? "";
-    if (!derivedBaseUrl) {
-      ctx.ui.notify(`Invalid base URL: ${idInput} — expected http(s)://host[/v1]`, "error");
-      return;
-    }
-  }
-  if (!validateRef(id)) {
-    ctx.ui.notify(
-      `Invalid gateway id: ${id} — use lowercase letters/digits/dashes, e.g. apimart`,
-      "error",
-    );
+  const baseUrl = normalizeGatewayBaseUrl(urlInput) ?? "";
+  if (!baseUrl) {
+    ctx.ui.notify(`Invalid base URL: ${urlInput} — expected http(s)://host[/v1]`, "error");
     return;
   }
-  const label = ((await ctx.ui.input("Label", id)) ?? "").trim() || id;
-  const baseUrl = (
-    (await ctx.ui.input(
-      `Base URL (…/v1)${derivedBaseUrl ? `, Enter = ${derivedBaseUrl}` : ""}`,
-      derivedBaseUrl,
-    )) ?? ""
-  ).trim() || derivedBaseUrl;
+  const id = deriveGatewayIdFromUrl(baseUrl);
+  if (id === null || !validateRef(id)) {
+    ctx.ui.notify(`Could not derive a gateway id from ${baseUrl}`, "error");
+    return;
+  }
+  const label = id;
   const key = ((await ctx.ui.input("API key", "")) ?? "").trim();
   if (!baseUrl || !key) {
     ctx.ui.notify("baseUrl and API key are required", "error");
@@ -807,28 +787,36 @@ export async function addProviderFlow(
     ctx.ui.notify(`Unknown gateway: ${gatewayId}`, "error");
     return;
   }
-  const id = ((await ctx.ui.input("Provider id (lowercase, dashes ok)", "")) ?? "").trim();
-  if (!validateRef(id)) {
-    if (looksLikeUrl(id)) {
-      ctx.ui.notify(
-        `Looks like a URL — providers live inside gateway ${gatewayId}; to add an independent gateway use 'a' on the Gateways list instead (id like 'apimart')`,
-        "error",
-      );
-    } else {
-      ctx.ui.notify(`Invalid provider id: ${id}`, "error");
-    }
+  // 极简：地址 + key + API 类型；id 从地址推导（name = id），复用 gateway 地址时手动补一个
+  const rawBaseUrl = (
+    (await ctx.ui.input(`Provider base URL (…/v1, Enter = ${profile.baseUrl})`, "")) ?? ""
+  ).trim();
+  if (rawBaseUrl && !normalizeGatewayBaseUrl(rawBaseUrl)) {
+    ctx.ui.notify(`Invalid provider base URL: ${rawBaseUrl} — expected http(s)://host[/v1]`, "error");
     return;
+  }
+  const baseUrlInput = rawBaseUrl ? normalizeGatewayBaseUrl(rawBaseUrl)! : "";
+  const apiKeyInput = ((await ctx.ui.input("Provider API key (Enter = reuse gateway key)", "")) ?? "").trim();
+  let id: string;
+  if (baseUrlInput) {
+    const derived = deriveGatewayIdFromUrl(baseUrlInput);
+    if (derived === null || !validateRef(derived)) {
+      ctx.ui.notify(`Could not derive a provider id from ${baseUrlInput}`, "error");
+      return;
+    }
+    id = derived;
+  } else {
+    id = ((await ctx.ui.input("Provider id (lowercase, dashes ok)", "")) ?? "").trim();
+    if (!validateRef(id)) {
+      ctx.ui.notify(`Invalid provider id: ${id}`, "error");
+      return;
+    }
   }
   if (profile.providers.some((p) => p.id === id)) {
     ctx.ui.notify(`Provider exists: ${id}`, "error");
     return;
   }
-  const name = ((await ctx.ui.input("Provider name", id)) ?? "").trim() || id;
-  // schema 2：provider 级 baseUrl/apiKey 直写；留空回退到 gateway 级
-  const baseUrlInput = (
-    (await ctx.ui.input(`Provider base URL (…/v1, Enter = ${profile.baseUrl})`, "")) ?? ""
-  ).trim();
-  const apiKeyInput = ((await ctx.ui.input("Provider API key (Enter = reuse gateway key)", "")) ?? "").trim();
+  const name = id;
   // API 类型放最后：UI 模式用选择器（取消 → 中止流程，杜绝 URL 误粘贴进自由文本）；
   // 非 UI 环境回退到输入框，仍走严格 ALLOWED_APIS 校验
   let apiInput: string;
@@ -868,18 +856,8 @@ export async function addProviderFlow(
     );
     return;
   }
-  const res = await showVimListPicker<GatewayModel>(ctx, {
-    title: `Select models for provider ${id} (Space toggle, Esc done)`,
-    items: models.map((m) => ({
-      id: m.id,
-      label: m.name ? `${m.id} — ${m.name}` : m.id,
-      data: m,
-    })),
-    mode: "toggle",
-    hint: "j/k nav · / filter · Space/Enter toggle · Esc done",
-  });
-  if (!res) return; // TUI 不可用/取消
-  const selected = models.filter((m) => (res.checked ?? []).includes(m.id));
+  // 极简：全量导入，不弹勾选（模型管理以后再设计）
+  const selected = models;
   const result = await addProviderToGateway(
     cfg.repoPath,
     gatewayId,

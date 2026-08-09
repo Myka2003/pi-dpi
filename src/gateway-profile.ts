@@ -12,6 +12,8 @@ export interface GatewayModel {
   cost?: Record<string, unknown>;
   compat?: Record<string, unknown>;
   thinkingLevelMap?: Record<string, string | null>;
+  /** 模型级 API 覆盖（如 gpt-5 系必须走 openai-responses，否则 chat/completions 拒绝 function tools） */
+  api?: string;
 }
 
 export interface GatewayProvider {
@@ -80,6 +82,7 @@ function validApiKey(value: unknown): value is string {
 
 function validModel(value: unknown): value is GatewayModel {
   if (!isRecord(value) || typeof value.id !== "string" || value.id.length === 0) return false;
+  if (value.api !== undefined && (typeof value.api !== "string" || !ALLOWED_APIS.has(value.api))) return false;
   if (value.name !== undefined && typeof value.name !== "string") return false;
   if (value.reasoning !== undefined && typeof value.reasoning !== "boolean") return false;
   if (value.input !== undefined && (!Array.isArray(value.input) || value.input.some((item) => item !== "text" && item !== "image"))) return false;

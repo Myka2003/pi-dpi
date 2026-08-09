@@ -183,8 +183,10 @@ export async function commitPushGateway(
     };
   }
   // commit 已成功：committed=true 立即成立；push 失败先 pull --rebase 吸收远端
-  // 提交再重试一次，仍失败只降级 pushed
-  const pushOpts = { ...opts, timeoutMs: 60000 };
+  // 提交再重试一次，仍失败只降级 pushed。push 走 https+token+代理（remote 必须是
+  // https 而非 SSH：SSH 直连 22 端口在国内网络会挂满超时，/dpi 会像死机一样卡住）。
+  // 30s 上限：失败快速返回，提交已落本地，后续 commit 或 /dpi-sync 会再推。
+  const pushOpts = { ...opts, timeoutMs: 30000 };
   const r = await pushWithRebaseRetry(repoPath, pushOpts);
   return r.pushed
     ? { committed: true, pushed: true }
