@@ -283,6 +283,53 @@ describe("gateway writer", () => {
     expect(scanGatewayProfiles(work).some((p) => p.id === "apimart")).toBe(true);
   });
 
+  it("recovers from non-fast-forward push by pulling the remote commit then pushing", async () => {
+    const { work, bare } = tempRepo();
+    // 第二个工作克隆 B：从同一 bare 远端克隆，先推一个远端提交，让 A 落后
+    const workB = mkdtempSync(join(tmpdir(), "gw-work-b-"));
+    dirs.push(workB);
+    execFileSync("git", ["clone", bare, workB]);
+    execFileSync(
+      "git",
+      [
+        "-C",
+        workB,
+        "-c",
+        "user.name=dpi",
+        "-c",
+        "user.email=dpi@users.noreply.github.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "remote-side commit",
+      ],
+    );
+    execFileSync("git", ["-C", workB, "push"]);
+
+    // A 落后于远端：首次 push 被拒（non-fast-forward），pull --rebase --autostash
+    // 吸收远端提交后重试 push 成功
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+    expect(result.error).toBeUndefined();
+    // 远端同时包含本地 profile 提交与 B 的远端提交
+    const remoteLog = execFileSync("git", ["-C", bare, "log", "--oneline", "--all"], {
+      encoding: "utf-8",
+    });
+    expect(remoteLog).toContain("feat: add apimart gateway");
+    expect(remoteLog).toContain("remote-side commit");
+  });
+
   it("adds profiles to sparse-checkout when missing so writes still commit and push", async () => {
     const { work } = tempRepo();
     // 稀疏检出只含 agents/，profiles/ 不在其中 → git add 会被 pathspec 拒绝

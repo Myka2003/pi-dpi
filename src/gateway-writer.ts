@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { gitAuthOpts } from "./config.ts";
-import { gitIn } from "./git.ts";
+import { gitAuthOpts, loadConfig } from "./config.ts";
+import { gitIn, type GitOptions } from "./git.ts";
 import { parseGatewayProfile, type GatewayModel, type GatewayProfile } from "./gateway-profile.ts";
 
 export interface AddGatewayInput {
@@ -92,6 +92,48 @@ async function commitIdentityArgs(repoPath: string): Promise<string[]> {
   return args;
 }
 
+/**
+ * push-with-retry：首次 push 失败（典型场景：共享仓库上远端已前进，本机提交
+ * non-fast-forward 被拒）时，pull --rebase --autostash 吸收远端提交后重试 push
+ * 一次；pull/rebase 抛出（冲突）则 rebase --abort 恢复一致，返回可恢复错误信息
+ * （交用户跑 /dpi-sync 解决）。
+ */
+async function pushWithRebaseRetry(
+  repoPath: string,
+  pushOpts: GitOptions,
+): Promise<{ pushed: boolean; error?: string }> {
+  const branch = loadConfig().branch || "main";
+  try {
+    await gitIn(repoPath, ["push"], pushOpts);
+    return { pushed: true };
+  } catch (error) {
+    try {
+      await gitIn(repoPath, ["pull", "--rebase", "--autostash", "origin", branch], pushOpts);
+    } catch {
+      // rebase 冲突（或 pull 因别的原因失败）：abort 保持仓库一致
+      try {
+        await gitIn(repoPath, ["rebase", "--abort"], { noAuth: true });
+      } catch {
+        // abort 失败（如本就没有 rebase 在进行）不覆盖主错误
+      }
+      return {
+        pushed: false,
+        error: "push failed: remote moved and rebase conflicted; run /dpi-sync to resolve",
+      };
+    }
+    // pull --rebase 成功：重试 push 一次
+    try {
+      await gitIn(repoPath, ["push"], pushOpts);
+      return { pushed: true };
+    } catch (error) {
+      return {
+        pushed: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
 export async function commitPushGateway(
   repoPath: string,
   profileId: string,
@@ -119,17 +161,13 @@ export async function commitPushGateway(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  // commit 已成功：committed=true 立即成立；push 失败只降级 pushed
-  try {
-    await gitIn(repoPath, ["push"], { ...opts, timeoutMs: 60000 });
-    return { committed: true, pushed: true };
-  } catch (error) {
-    return {
-      committed: true,
-      pushed: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  // commit 已成功：committed=true 立即成立；push 失败先 pull --rebase 吸收远端
+  // 提交再重试一次，仍失败只降级 pushed
+  const pushOpts = { ...opts, timeoutMs: 60000 };
+  const r = await pushWithRebaseRetry(repoPath, pushOpts);
+  return r.pushed
+    ? { committed: true, pushed: true }
+    : { committed: true, pushed: false, error: r.error };
 }
 
 export function deleteGatewayProfile(repoPath: string, profileId: string): boolean {
