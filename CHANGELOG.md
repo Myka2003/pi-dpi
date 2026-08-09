@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.42
+
+- Fall back to a dpi identity when git user.name/user.email are unset (gateway commits work on fresh machines).
+
 ## 0.8.41
 
 - Ensure `profiles/` is in sparse-checkout before gateway add/delete (fixes writes on sparse repos).
