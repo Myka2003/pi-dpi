@@ -18,7 +18,7 @@ import { installExtension } from "../src/extension-installer.ts";
 import { registerDpiCommand } from "../src/command-alias.ts";
 
 /** 扫描仓库根 extensions/ 注册表：顶层 .ts 文件 + 目录型（index.ts 或 package.json 入口），按名排序 */
-function scanRegistryExtensions(repo: string): { name: string; description: string }[] {
+export function scanRegistryExtensions(repo: string): { name: string; description: string }[] {
   try {
     const dir = join(repo, "extensions");
     if (!existsSync(dir)) return [];
@@ -40,7 +40,8 @@ function scanRegistryExtensions(repo: string): { name: string; description: stri
   }
 }
 
-const config: RegistryManagerConfig = {
+/** extension 注册表差异配置（/dpi 控制台与 /dpi-extensions 共用） */
+export const config: RegistryManagerConfig = {
   kindLabel: "扩展",
   declaredField: "extensions",
   scanRegistry: scanRegistryExtensions,

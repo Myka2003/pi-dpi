@@ -41,7 +41,7 @@ function skillDescription(path: string): string {
 }
 
 /** 扫描仓库根 skills/ 注册表：含 SKILL.md 的子目录（目录名白名单校验），按名排序 */
-function scanRegistrySkills(repo: string): { name: string; description: string }[] {
+export function scanRegistrySkills(repo: string): { name: string; description: string }[] {
   try {
     const dir = join(repo, "skills");
     if (!existsSync(dir)) return [];
@@ -59,7 +59,8 @@ function scanRegistrySkills(repo: string): { name: string; description: string }
   }
 }
 
-const config: RegistryManagerConfig = {
+/** skill 注册表差异配置（/dpi 控制台与 /dpi-skills 共用） */
+export const config: RegistryManagerConfig = {
   kindLabel: "技能",
   declaredField: "skills",
   scanRegistry: scanRegistrySkills,
