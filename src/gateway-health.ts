@@ -21,12 +21,12 @@ async function resolveSecret(command: string): Promise<string> {
 
 export async function checkGatewayHealth(
   profile: GatewayProfile,
-  options: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  options: { fetchImpl?: typeof fetch; timeoutMs?: number; env?: NodeJS.ProcessEnv; credentialDir?: string } = {},
 ): Promise<GatewayHealthReport> {
   const issues: string[] = [];
   const providers = profile.providers.length;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const credential = resolveCredentialRef(profile.credentialRef);
+  const credential = resolveCredentialRef(profile.credentialRef, options.env, options.credentialDir);
   if (credential.kind === "missing") {
     return { ok: false, credential: "missing", endpoint: "unchecked", models: 0, providers, issues: [credential.reason] };
   }

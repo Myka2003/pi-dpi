@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkGatewayHealth } from "../src/gateway-health.ts";
 import type { GatewayProfile } from "../src/gateway-profile.ts";
@@ -12,11 +15,19 @@ const profile: GatewayProfile = {
 
 describe("gateway health", () => {
   it("reports missing credential without printing command output", async () => {
-    delete process.env.DPI_CREDENTIAL_REF_RIFF_CPA_CLIENT_TOKEN;
-    const report = await checkGatewayHealth(profile, { fetchImpl: async () => new Response("{}") });
-    expect(report.credential).toBe("missing");
-    expect(report.ok).toBe(false);
-    expect(JSON.stringify(report)).not.toContain("secret");
+    const credentialDir = mkdtempSync(join(tmpdir(), "dpi-gw-health-"));
+    try {
+      delete process.env.DPI_CREDENTIAL_REF_RIFF_CPA_CLIENT_TOKEN;
+      const report = await checkGatewayHealth(profile, {
+        fetchImpl: async () => new Response("{}"),
+        credentialDir,
+      });
+      expect(report.credential).toBe("missing");
+      expect(report.ok).toBe(false);
+      expect(JSON.stringify(report)).not.toContain("secret");
+    } finally {
+      rmSync(credentialDir, { recursive: true, force: true });
+    }
   });
 
   it("checks /models with command-backed credential", async () => {
