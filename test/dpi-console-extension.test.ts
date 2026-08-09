@@ -139,27 +139,48 @@ function gatewayPick(id: string): VimListResult<ConsoleNavData> {
   };
 }
 
+function providerPick(id: string): VimListResult<ConsoleNavData> {
+  return {
+    action: "pick",
+    item: {
+      id,
+      label: `[provider] ${id}`,
+      data: { level: "providers", kind: "provider", id, meta: "" },
+    },
+  };
+}
+
 describe("dpi console extension — three-level navigation", () => {
-  it("gateway pick runs useGateway through top→category→items (health report, not the src placeholder)", async () => {
+  it("gateway Enter opens provider list; provider Enter opens model list; Esc unwinds level by level", async () => {
     useTempHome();
     repo = mkdtempSync(join(tmpdir(), "dpi-console-ext-"));
     seedGatewayProfile();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: repo });
-    const { pi, handlers, registerProvider } = mockPi();
+    const { pi, handlers } = mockPi();
     dpiConsole(pi);
     const handler = handlers.get("dpi");
     expect(handler).toBeDefined();
 
-    const { ctx, notifyCalls } = makeCtx([
+    const { ctx, titles } = makeCtx([
       topRepoPick(),
       categoryPick("Gateways"),
-      gatewayPick("ser7-cpa"),
+      gatewayPick("ser7-cpa"), // Enter gateway → 供应商列表
+      providerPick("ser7-cpa"), // Enter 供应商 → 模型列表
+      { action: "cancel" }, // Esc at models → providers
+      { action: "cancel" }, // Esc at providers → gateways
+      { action: "cancel" }, // Esc at gateways → category
     ]);
     await handler!("", ctx);
-    // useGateway 的 health 失败路径（临时 HOME 无凭证 → credential: missing，不发网络请求）
-    expect(notifyCalls.some((n) => n.message.includes("credential: missing"))).toBe(true);
-    expect(notifyCalls.some((n) => n.message.includes("wire to applyProfile"))).toBe(false);
-    expect(registerProvider).not.toHaveBeenCalled();
+    expect(titles).toEqual([
+      "dpi console",
+      "dpi — category",
+      "dpi — gateways",
+      "dpi — ser7-cpa providers",
+      "dpi — ser7-cpa/ser7-cpa models",
+      "dpi — ser7-cpa providers",
+      "dpi — gateways",
+      "dpi — category",
+    ]);
   });
 
   it("pick on an unknown gateway notifies the error", async () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitAuthOpts } from "./config.ts";
 import { gitIn } from "./git.ts";
@@ -139,4 +139,96 @@ export function deleteGatewayProfile(repoPath: string, profileId: string): boole
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 供应商 / 模型管理（0.8.43）：读 profile → 改 providers/models → parseGatewayProfile
+// 校验 → 写回 → ensureGatewayDirsSparse + commitPushGateway。失败返回
+// { ok:false, error }，绝不抛出（mutate 内的校验错误由 catch 统一转换）。
+// ---------------------------------------------------------------------------
+
+export interface AddProviderInput {
+  id: string;
+  name?: string;
+  api: GatewayProfile["providers"][number]["api"];
+  models: GatewayModel[];
+}
+
+type MutateResult = { ok: boolean; error?: string };
+
+async function mutateGatewayProfile(
+  repoPath: string,
+  gatewayId: string,
+  message: string,
+  mutate: (p: GatewayProfile) => void,
+): Promise<MutateResult> {
+  const file = join(repoPath, "profiles", "gateways", `${gatewayId}.json`);
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf-8"));
+    const profile = parseGatewayProfile(raw);
+    if (!profile) return { ok: false, error: "profile invalid" };
+    mutate(profile);
+    if (!parseGatewayProfile(profile)) return { ok: false, error: "mutated profile invalid" };
+    writeFileSync(file, `${JSON.stringify(profile, null, 2)}\n`, { mode: 0o644 });
+    if (!(await ensureGatewayDirsSparse(repoPath))) return { ok: false, error: "sparse ensure failed" };
+    const r = await commitPushGateway(repoPath, gatewayId, message);
+    return { ok: r.committed && r.pushed, error: r.error };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 新增供应商：id 冲突时失败；成功写回并 commit+push */
+export async function addProviderToGateway(
+  repoPath: string,
+  gatewayId: string,
+  provider: AddProviderInput,
+  message: string,
+): Promise<MutateResult> {
+  return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
+    if (p.providers.some((x) => x.id === provider.id)) throw new Error(`provider exists: ${provider.id}`);
+    p.providers.push(provider);
+  });
+}
+
+/** 追加模型到供应商（已存在同 id 的模型跳过）；成功写回并 commit+push */
+export async function addModelsToProvider(
+  repoPath: string,
+  gatewayId: string,
+  providerId: string,
+  models: GatewayModel[],
+  message: string,
+): Promise<MutateResult> {
+  return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
+    const prov = p.providers.find((x) => x.id === providerId);
+    if (!prov) throw new Error(`provider missing: ${providerId}`);
+    for (const m of models) if (!prov.models.some((x) => x.id === m.id)) prov.models.push(m);
+  });
+}
+
+/** 删除供应商（不存在则静默 no-op 仍提交）；成功写回并 commit+push */
+export async function removeProvider(
+  repoPath: string,
+  gatewayId: string,
+  providerId: string,
+  message: string,
+): Promise<MutateResult> {
+  return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
+    p.providers = p.providers.filter((x) => x.id !== providerId);
+  });
+}
+
+/** 删除供应商下的单个模型（供应商缺失报错）；成功写回并 commit+push */
+export async function removeModel(
+  repoPath: string,
+  gatewayId: string,
+  providerId: string,
+  modelId: string,
+  message: string,
+): Promise<MutateResult> {
+  return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
+    const prov = p.providers.find((x) => x.id === providerId);
+    if (!prov) throw new Error(`provider missing: ${providerId}`);
+    prov.models = prov.models.filter((x) => x.id !== modelId);
+  });
 }

@@ -1,53 +1,79 @@
 /**
- * dpi-console：统一 /dpi 控制台（三层导航：top repo 列表 → category
- * Skills/Extensions/Gateways → items 条目列表）＋ 兼容的扁平列表构建。
+ * dpi-console：统一 /dpi 控制台（0.8.43 内容模型驱动导航）。
  *
- * 三层状态机（runConsole）：
- * - top：绑定仓库条目（repo:current，pick 进入 category）+「+ Add repo」
- *   条目（pick / a 走 addRepoFlow 绑定）；s 走 inspectRepo 状态摘要。
- * - category：Skills / Extensions 直接进入 runRegistryManager（其 toggle
- *   列表即第三层）；Gateways 进入 gateway 条目列表（items 层，复用
- *   handleConsoleResult 的 add/delete/status 逻辑；pick 复用 useGateway）；
- *   Esc 返回 top（顶层再按 Esc 退出控制台）。
- * - items：gateway 条目（add/delete/status/pick），Esc 返回 category。
+ * 状态机（runConsole）：
+ * - top：绑定仓库条目（repo:current，pick 进入 category）+「+ Add repo」条目。
+ * - category：六个固定分类 Agents / Skills / Extensions / Gateways / Sessions /
+ *   Machines。Skills/Extensions 进入 runRegistryManager；Sessions 直接复用
+ *   session-browser 的 runSessionBrowser（标题附加 record/归档/未推送状态行）；
+ *   Agents/Gateways/Machines 进入各自条目列表。
+ * - gateways：gateway 条目（add/delete/status 复用既有逻辑）；Enter 进入供应商列表。
+ * - providers：gateway 的供应商列表（a 添加→/models 勾选→addProviderToGateway，
+ *   d 确认删除→removeProvider）；Enter 进入模型列表。
+ * - models：供应商的模型列表（a 从 /models toggle 追加→addModelsToProvider，
+ *   d 确认删除→removeModel）；Esc 逐级返回。
+ * - agents：scanAgents 列表，当前 agent 标 *；Enter 切换（saveConfig + reload），
+ *   s 声明摘要。
+ * - machines：machines/*.json 文件名列表；Enter 只读展示文件内容。
  *
- * 旧的扁平构建（buildConsoleItems / handleConsoleResult）保留不动，供既有
- * 测试与内部复用；条目来源：
- * - gateway：scanGatewayProfiles（src/gateway-profile.ts）
- * - repo：config.repoUrl 绑定的内容仓库
- * - skill / ext：extensions/skill-manager.ts / extensions/ext-manager.ts 的
- *   注册表扫描函数（薄壳导出）；增删走 runRegistryManager（与 /dpi-skills、
- *   /dpi-extensions 同构的主循环）
+ * 旧的扁平构建（buildConsoleItems / handleConsoleResult）与三层构建
+ * （buildItemList / handleItemResult）保留不动，供既有测试与兼容复用。
  *
  * add-gateway 流程严格按顺序：输入 id/label/baseUrl/key → writeCredential →
  * fetchGatewayModels → buildGatewayProfile → writeGatewayProfile →
- * commitPushGateway → notify；commit 前任何一步失败都回滚删除 credential
- * （API key 只进 credential-store，绝不写入日志或 notify 文案）。
+ * commitPushGateway → notify；commit 前任何一步失败都回滚删除 credential。
+ * 供应商/模型增删全部走 gateway-writer 的 mutate 路径（校验→写回→commit+push），
+ * 失败 { ok:false } 不抛，UI 层 notify。
  *
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展入口，无 default 导出会报错），
  * 由 extensions/dpi-console.ts 薄壳调用。
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, readAgentManifest } from "./config.ts";
+import { execFile } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import {
+  loadConfig,
+  readAgentManifest,
+  saveConfig,
+  scanAgents,
+  syncExtensionFilter,
+  type DpiConfig,
+} from "./config.ts";
 import { inspectRepo } from "./repo-doctor.ts";
 import { useGateway } from "../extensions/gateway-manager.ts";
+import { runSessionBrowser } from "../extensions/session-browser.ts";
 import { safeAgentName } from "./common.ts";
 import { deleteCredential, validateRef, writeCredential } from "./credential-store.ts";
 import { fetchGatewayModels } from "./gateway-catalog.ts";
 import { checkGatewayHealth } from "./gateway-health.ts";
-import { scanGatewayProfiles, type GatewayModel } from "./gateway-profile.ts";
 import {
+  ALLOWED_APIS,
+  resolveCredentialRef,
+  scanGatewayProfiles,
+  type GatewayModel,
+  type GatewayProfile,
+} from "./gateway-profile.ts";
+import {
+  addModelsToProvider,
+  addProviderToGateway,
   buildGatewayProfile,
   commitPushGateway,
   deleteGatewayProfile,
   ensureGatewayDirsSparse,
+  removeModel,
+  removeProvider,
   writeGatewayProfile,
 } from "./gateway-writer.ts";
 import { runRegistryManager } from "./registry-manager.ts";
 import { bindRepoWithKey } from "./repo-binder.ts";
-import { showVimListPicker, type VimListItem, type VimListResult } from "./vim-list-picker.ts";
+import { pendingCommits, readSaveState } from "./save-state.ts";
+import { showVimListPicker, type VimListAction, type VimListItem, type VimListResult } from "./vim-list-picker.ts";
 import { config as extManagerConfig, scanRegistryExtensions } from "../extensions/ext-manager.ts";
 import { config as skillManagerConfig, scanRegistrySkills } from "../extensions/skill-manager.ts";
+
+const runSecret = promisify(execFile);
 
 export type ConsoleItemKind = "gateway" | "repo" | "skill" | "ext";
 
@@ -313,13 +339,24 @@ export async function handleConsoleResult(
 }
 
 // ============================================================================
-// 三层导航（0.8.40）：top（repo 列表）→ category（Skills/Extensions/Gateways）
-// → items（条目列表）。旧的扁平构建函数保留，三层导航在其上叠加。
+// 内容模型驱动导航（0.8.43）：top（repo 列表）→ category（六个分类）→
+// 各分类条目列表。Gateways 深入两级：gateway 列表 → 供应商列表 → 模型列表。
+// 旧的扁平构建（buildConsoleItems / handleConsoleResult）与三层构建
+// （buildItemList / handleItemResult）保留，供既有测试与兼容复用。
 // ============================================================================
 
-export type ConsoleLevel = "top" | "category" | "items";
+export type ConsoleLevel = "top" | "category" | "items" | "gateways" | "providers" | "models" | "agents" | "machines";
 
-export type ConsoleNavKind = "repo" | "category" | "gateway" | "skill" | "ext";
+export type ConsoleNavKind =
+  | "repo"
+  | "category"
+  | "gateway"
+  | "provider"
+  | "model"
+  | "skill"
+  | "ext"
+  | "agent"
+  | "machine";
 
 export interface ConsoleNavData {
   level: ConsoleLevel;
@@ -350,9 +387,35 @@ export function buildTopItems(cfg: { repoUrl: string; repoPath: string }): VimLi
   return items;
 }
 
-/** category 层：Skills / Extensions / Gateways 三个固定分类。 */
-export function buildCategoryItems(): VimListItem<ConsoleNavData>[] {
+/** Sessions 状态行：record on/off（loadConfig().recordSessions）· 最后归档时间
+ * （readSaveState().lastArchive）· 未推送提交数（pendingCommits）。 */
+export async function formatSessionsStatus(cfg: DpiConfig): Promise<string> {
+  const state = readSaveState();
+  const pending = cfg.repoUrl ? await pendingCommits(cfg) : null;
+  const record = cfg.recordSessions ? "on" : "off";
+  const archive =
+    state.lastArchive && typeof state.lastArchive.time === "string"
+      ? `last archive ${state.lastArchive.time.slice(5, 16).replace("T", " ")}`
+      : "no archive";
+  const unpushed = pending === null ? "" : ` · ${pending} unpushed`;
+  return `record: ${record} · ${archive}${unpushed}`;
+}
+
+/** category 层：Agents / Skills / Extensions / Gateways / Sessions / Machines
+ * 六个固定分类；cfg.sessionsStatus 由 runConsole 预计算（Sessions 条目状态行）。 */
+export function buildCategoryItems(
+  cfg?: { sessionsStatus?: string },
+): VimListItem<ConsoleNavData>[] {
+  const sessionsMeta = cfg?.sessionsStatus
+    ? `browse archives · ${cfg.sessionsStatus}`
+    : "browse archives";
   return [
+    {
+      id: "Agents",
+      label: "Agents",
+      meta: "switch agent · declarations",
+      data: { level: "category", kind: "category", id: "Agents", meta: "switch agent · declarations" },
+    },
     {
       id: "Skills",
       label: "Skills",
@@ -370,6 +433,18 @@ export function buildCategoryItems(): VimListItem<ConsoleNavData>[] {
       label: "Gateways",
       meta: "list / add / delete gateway profiles",
       data: { level: "category", kind: "category", id: "Gateways", meta: "list / add / delete gateway profiles" },
+    },
+    {
+      id: "Sessions",
+      label: "Sessions",
+      meta: sessionsMeta,
+      data: { level: "category", kind: "category", id: "Sessions", meta: sessionsMeta },
+    },
+    {
+      id: "Machines",
+      label: "Machines",
+      meta: "machine settings (read-only)",
+      data: { level: "category", kind: "category", id: "Machines", meta: "machine settings (read-only)" },
     },
   ];
 }
@@ -408,6 +483,72 @@ export function buildItemList(
   }));
 }
 
+/** providers 层：所选 gateway 的供应商列表（数据来自 scanGatewayProfiles）。 */
+export function buildProviderList(
+  cfg: { repoPath: string },
+  gatewayId: string,
+): VimListItem<ConsoleNavData>[] {
+  const profile = scanGatewayProfiles(cfg.repoPath).find((p) => p.id === gatewayId);
+  if (!profile) return [];
+  return profile.providers.map((provider) => ({
+    id: provider.id,
+    label: provider.name ? `[provider] ${provider.id} — ${provider.name}` : `[provider] ${provider.id}`,
+    meta: `${provider.models.length} model${provider.models.length === 1 ? "" : "s"}`,
+    data: { level: "providers", kind: "provider", id: provider.id, meta: provider.api },
+  }));
+}
+
+/** models 层：所选供应商的模型列表。 */
+export function buildModelList(
+  cfg: { repoPath: string },
+  gatewayId: string,
+  providerId: string,
+): VimListItem<ConsoleNavData>[] {
+  const profile = scanGatewayProfiles(cfg.repoPath).find((p) => p.id === gatewayId);
+  const provider = profile?.providers.find((p) => p.id === providerId);
+  if (!provider) return [];
+  return provider.models.map((m) => ({
+    id: m.id,
+    label: `[model] ${m.id}${m.name ? ` — ${m.name}` : ""}`,
+    meta: m.input?.includes("image") ? "vision" : "",
+    data: { level: "models", kind: "model", id: m.id, meta: "" },
+  }));
+}
+
+/** agents 层：scanAgents 列表，当前 agent 标 *。 */
+export function buildAgentList(
+  cfg: { repoPath: string; currentAgent?: string },
+): VimListItem<ConsoleNavData>[] {
+  const current = safeAgentName(cfg.currentAgent ?? "coder");
+  return scanAgents(cfg.repoPath).map((name) => {
+    const desc = readAgentManifest(cfg.repoPath, name).description;
+    return {
+      id: name,
+      label: desc ? `${name} — ${desc}` : name,
+      meta: name === current ? "current *" : "",
+      data: { level: "agents", kind: "agent", id: name, meta: "" },
+    };
+  });
+}
+
+/** machines 层：machines/*.json 文件名列表。 */
+export function buildMachineList(cfg: { repoPath: string }): VimListItem<ConsoleNavData>[] {
+  try {
+    return readdirSync(join(cfg.repoPath, "machines"), { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith(".json"))
+      .map((e) => e.name.replace(/\.json$/, ""))
+      .sort()
+      .map((name) => ({
+        id: name,
+        label: `[machine] ${name}`,
+        meta: "",
+        data: { level: "machines", kind: "machine", id: name, meta: "" },
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /** top 层结果路由：pick 仓库 → "enter"（进 category）；a / pick add 条目 →
  * addRepoFlow → "reopen"（重开 top 列表）；s → inspectRepo 状态摘要 → "reopen"；
  * cancel → "done"（退出控制台）。 */
@@ -444,16 +585,21 @@ export async function handleTopResult(
   return "done";
 }
 
-/** category 层结果路由：Skills / Extensions → runRegistryManager（其 toggle 列表
- * 即第三层）→ "back"（回 top）；Gateways → "enter"（进 items 层）；
+export type CategoryNav = "gateways" | "agents" | "machines" | "back";
+
+/** category 层结果路由：Agents/Gateways/Machines → 进入各自列表；
+ * Skills/Extensions → runRegistryManager → "back"（回 top）；
+ * Sessions → runSessionBrowser（标题附加状态行）→ "back"；
  * cancel（Esc）→ "back"（回 top，顶层再按 Esc 退出控制台）。 */
 export async function handleCategoryResult(
   ctx: ExtensionCommandContext,
   result: VimListResult<ConsoleNavData>,
-): Promise<"enter" | "back"> {
+  options: { pi?: ExtensionAPI; fetchImpl?: typeof fetch } = {},
+): Promise<CategoryNav> {
   if (!result || result.action === "cancel") return "back";
   if (result.action === "pick" && result.item) {
     const id = result.item.data.id;
+    if (id === "Agents") return "agents";
     if (id === "Skills") {
       await runRegistryManager(ctx, skillManagerConfig);
       return "back";
@@ -462,19 +608,34 @@ export async function handleCategoryResult(
       await runRegistryManager(ctx, extManagerConfig);
       return "back";
     }
-    if (id === "Gateways") return "enter";
+    if (id === "Gateways") return "gateways";
+    if (id === "Sessions") {
+      if (!options.pi) {
+        ctx.ui.notify("Session browser unavailable (no extension context)", "error");
+        return "back";
+      }
+      const prefix = `Session Archive — ${await formatSessionsStatus(loadConfig())}`;
+      await runSessionBrowser(options.pi, ctx, { titlePrefix: prefix });
+      return "back";
+    }
+    if (id === "Machines") return "machines";
   }
   return "back";
 }
 
 function toLegacyKind(kind: ConsoleNavKind): ConsoleItemData["kind"] {
-  return kind === "category" ? "repo" : kind;
+  if (kind === "category") return "repo";
+  if (kind === "provider" || kind === "model" || kind === "agent" || kind === "machine") {
+    return "gateway"; // 新层级不应走到旧 items 路径；安全回退到 gateway
+  }
+  return kind;
 }
 
 /** items 层结果路由：pick gateway → useGateway（pi 注入时真实接线，否则占位提示）
  * → "back"（回 category）；pick skill/ext → 名称+描述 → "back"；
  * add/delete/status 复用 handleConsoleResult（空列表 add 直接走 addGatewayFlow）；
- * cancel → "back"。 */
+ * cancel → "back"。（0.8.43 起 runConsole 不再使用本函数——gateway pick 改为
+ * 进入供应商列表；保留供既有测试与兼容。） */
 export async function handleItemResult(
   ctx: ExtensionCommandContext,
   result: VimListResult<ConsoleNavData>,
@@ -525,8 +686,387 @@ export async function handleItemResult(
   return next === "reopen" ? "reopen" : "back";
 }
 
-/** 三层导航主循环：按 level 状态机路由，构建列表 → 处理结果 → 切换层级。
- * options.pi 由扩展层注入（gateway pick 时复用 useGateway 完成真实接线）。 */
+// ----------------------------------------------------------------------------
+// 供应商 / 模型管理流程（0.8.43）：全部复用 gateway-writer 的 mutate 路径，
+// 每个操作 commit+push；失败 { ok:false } 不抛，UI 层 notify。
+// ----------------------------------------------------------------------------
+
+/** 解析 gateway 的 API key：credentialRef → 命令解析 → 执行取明文（与
+ * gateway-health 的 resolveSecret 同构）。失败返回 null（不抛）。 */
+async function resolveGatewayApiKey(profile: GatewayProfile): Promise<string | null> {
+  const credential = resolveCredentialRef(profile.credentialRef);
+  if (credential.kind === "missing") return null;
+  try {
+    const { stdout } = await runSecret("/bin/sh", ["-lc", credential.value], {
+      timeout: 8000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+/** 添加供应商：输入 id/名称/api → /models 拉模型 → toggle 勾选 →
+ * addProviderToGateway（commit+push）。key 从 gateway 既有 credentialRef 解析。 */
+export async function addProviderFlow(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoUrl || !cfg.repoPath) {
+    ctx.ui.notify("No content repo bound; add one first (a → repo)", "warning");
+    return;
+  }
+  const profile = scanGatewayProfiles(cfg.repoPath).find((p) => p.id === gatewayId);
+  if (!profile) {
+    ctx.ui.notify(`Unknown gateway: ${gatewayId}`, "error");
+    return;
+  }
+  const id = ((await ctx.ui.input("Provider id (lowercase, dashes ok)", "")) ?? "").trim();
+  if (!validateRef(id)) {
+    ctx.ui.notify(`Invalid provider id: ${id}`, "error");
+    return;
+  }
+  if (profile.providers.some((p) => p.id === id)) {
+    ctx.ui.notify(`Provider exists: ${id}`, "error");
+    return;
+  }
+  const name = ((await ctx.ui.input("Provider name", id)) ?? "").trim() || id;
+  const apiInput = (
+    (await ctx.ui.input(`API (${[...ALLOWED_APIS].join(" | ")})`, "openai-completions")) ?? ""
+  ).trim();
+  if (!ALLOWED_APIS.has(apiInput)) {
+    ctx.ui.notify(`Invalid API: ${apiInput}`, "error");
+    return;
+  }
+  const key = await resolveGatewayApiKey(profile);
+  if (key === null) {
+    ctx.ui.notify(
+      `Credential unavailable for gateway ${gatewayId} (ref ${profile.credentialRef}) — add the key first`,
+      "error",
+    );
+    return;
+  }
+  let models: GatewayModel[];
+  try {
+    models = await fetchGatewayModels(profile.baseUrl, key, { fetchImpl: options.fetchImpl });
+  } catch (error) {
+    ctx.ui.notify(
+      `Model scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+    return;
+  }
+  const res = await showVimListPicker<GatewayModel>(ctx, {
+    title: `Select models for provider ${id} (Space toggle, Esc done)`,
+    items: models.map((m) => ({
+      id: m.id,
+      label: m.name ? `${m.id} — ${m.name}` : m.id,
+      data: m,
+    })),
+    mode: "toggle",
+    hint: "j/k nav · / filter · Space/Enter toggle · Esc done",
+  });
+  if (!res) return; // TUI 不可用/取消
+  const selected = models.filter((m) => (res.checked ?? []).includes(m.id));
+  const result = await addProviderToGateway(
+    cfg.repoPath,
+    gatewayId,
+    { id, name, api: apiInput, models: selected },
+    `feat: add provider ${id} to gateway ${gatewayId}`,
+  );
+  ctx.ui.notify(
+    result.ok
+      ? `Provider ${id} added to ${gatewayId} (commit+push ok, ${selected.length} model${selected.length === 1 ? "" : "s"})`
+      : `Add provider failed: ${result.error}`,
+    result.ok ? "info" : "error",
+  );
+}
+
+/** 追加模型：/models 拉模型 → toggle 勾选（已存在项预勾选）→
+ * addModelsToProvider（commit+push）。 */
+export async function addModelsFlow(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  providerId: string,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoUrl || !cfg.repoPath) {
+    ctx.ui.notify("No content repo bound; add one first (a → repo)", "warning");
+    return;
+  }
+  const profile = scanGatewayProfiles(cfg.repoPath).find((p) => p.id === gatewayId);
+  const provider = profile?.providers.find((p) => p.id === providerId);
+  if (!profile || !provider) {
+    ctx.ui.notify(`Unknown provider: ${providerId}`, "error");
+    return;
+  }
+  const key = await resolveGatewayApiKey(profile);
+  if (key === null) {
+    ctx.ui.notify(
+      `Credential unavailable for gateway ${gatewayId} (ref ${profile.credentialRef}) — add the key first`,
+      "error",
+    );
+    return;
+  }
+  let models: GatewayModel[];
+  try {
+    models = await fetchGatewayModels(profile.baseUrl, key, { fetchImpl: options.fetchImpl });
+  } catch (error) {
+    ctx.ui.notify(
+      `Model scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+    return;
+  }
+  const res = await showVimListPicker<GatewayModel>(ctx, {
+    title: `Add models to ${providerId} (● already present)`,
+    items: models.map((m) => ({
+      id: m.id,
+      label: m.name ? `${m.id} — ${m.name}` : m.id,
+      checked: provider.models.some((x) => x.id === m.id),
+      data: m,
+    })),
+    mode: "toggle",
+    hint: "j/k nav · / filter · Space/Enter toggle · Esc done",
+  });
+  if (!res) return;
+  const existing = new Set(provider.models.map((m) => m.id));
+  const toAdd = models.filter((m) => (res.checked ?? []).includes(m.id) && !existing.has(m.id));
+  if (toAdd.length === 0) {
+    ctx.ui.notify("No new models selected (all already present)", "info");
+    return;
+  }
+  const result = await addModelsToProvider(
+    cfg.repoPath,
+    gatewayId,
+    providerId,
+    toAdd,
+    `feat: add ${toAdd.length} model${toAdd.length === 1 ? "" : "s"} to ${providerId}`,
+  );
+  ctx.ui.notify(
+    result.ok
+      ? `Added ${toAdd.length} model${toAdd.length === 1 ? "" : "s"} to ${providerId} (commit+push ok)`
+      : `Add models failed: ${result.error}`,
+    result.ok ? "info" : "error",
+  );
+}
+
+/** 删除供应商：confirm → removeProvider（commit+push）。 */
+export async function removeProviderFlow(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  providerId: string,
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoPath) return;
+  const ok = await ctx.ui.confirm(
+    "Delete provider",
+    `Delete provider "${providerId}" from gateway ${gatewayId}? Confirm?`,
+  );
+  if (!ok) return;
+  const result = await removeProvider(
+    cfg.repoPath,
+    gatewayId,
+    providerId,
+    `chore: remove provider ${providerId} from gateway ${gatewayId}`,
+  );
+  ctx.ui.notify(
+    result.ok
+      ? `Provider ${providerId} removed (commit+push ok)`
+      : `Remove provider failed: ${result.error}`,
+    result.ok ? "info" : "error",
+  );
+}
+
+/** 删除模型：confirm → removeModel（commit+push）。 */
+export async function removeModelFlow(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  providerId: string,
+  modelId: string,
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoPath) return;
+  const ok = await ctx.ui.confirm(
+    "Delete model",
+    `Delete model "${modelId}" from provider ${providerId}? Confirm?`,
+  );
+  if (!ok) return;
+  const result = await removeModel(
+    cfg.repoPath,
+    gatewayId,
+    providerId,
+    modelId,
+    `chore: remove model ${modelId} from ${providerId}`,
+  );
+  ctx.ui.notify(
+    result.ok
+      ? `Model ${modelId} removed (commit+push ok)`
+      : `Remove model failed: ${result.error}`,
+    result.ok ? "info" : "error",
+  );
+}
+
+/** gateways 层结果路由：pick gateway（校验存在）→ "providers"（进入供应商
+ * 列表）；其余 a/d/s/空列表 add 委托 handleItemResult（复用既有 add/delete/
+ * status 逻辑）；cancel → "back"。 */
+export async function handleGatewayListResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<"providers" | "back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const item = result.item.data;
+    if (item.kind === "gateway") {
+      const cfg = loadConfig();
+      const profile = cfg.repoPath
+        ? scanGatewayProfiles(cfg.repoPath).find((p) => p.id === item.id)
+        : undefined;
+      if (!profile) {
+        ctx.ui.notify(`Unknown gateway: ${item.id}`, "error");
+        return "back";
+      }
+      return "providers";
+    }
+    return "back";
+  }
+  return handleItemResult(ctx, result, options);
+}
+
+/** providers 层结果路由：pick provider（校验存在）→ "models"；a →
+ * addProviderFlow → "reopen"；d → 确认 → removeProviderFlow → "reopen"；
+ * cancel → "back"（回 gateways 层）。 */
+export async function handleProviderListResult(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  result: VimListResult<ConsoleNavData>,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<"models" | "back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const item = result.item.data;
+    if (item.kind === "provider") {
+      const cfg = loadConfig();
+      const profile = cfg.repoPath
+        ? scanGatewayProfiles(cfg.repoPath).find((p) => p.id === gatewayId)
+        : undefined;
+      const provider = profile?.providers.find((p) => p.id === item.id);
+      if (!provider) {
+        ctx.ui.notify(`Unknown provider: ${item.id}`, "error");
+        return "back";
+      }
+      return "models";
+    }
+    return "back";
+  }
+  if (result.action === "add") {
+    await addProviderFlow(ctx, gatewayId, options);
+    return "reopen";
+  }
+  if (result.action === "delete" && result.item) {
+    await removeProviderFlow(ctx, gatewayId, result.item.data.id);
+    return "reopen";
+  }
+  return "back";
+}
+
+/** models 层结果路由：a → addModelsFlow → "reopen"；d → 确认 →
+ * removeModelFlow → "reopen"；cancel → "back"（回 providers 层）。 */
+export async function handleModelListResult(
+  ctx: ExtensionCommandContext,
+  gatewayId: string,
+  providerId: string,
+  result: VimListResult<ConsoleNavData>,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<"back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "add") {
+    await addModelsFlow(ctx, gatewayId, providerId, options);
+    return "reopen";
+  }
+  if (result.action === "delete" && result.item) {
+    await removeModelFlow(ctx, gatewayId, providerId, result.item.data.id);
+    return "reopen";
+  }
+  return "back";
+}
+
+/** agents 层结果路由：pick agent → 切换（saveConfig + syncExtensionFilter +
+ * reload，复用 /dpi-agent 语义）→ "reopen"；s → 声明摘要 → "reopen"；
+ * cancel → "back"。 */
+export async function handleAgentListResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+): Promise<"back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const name = result.item.data.id;
+    const cfg = loadConfig();
+    if (!cfg.repoPath || !scanAgents(cfg.repoPath).includes(name)) {
+      ctx.ui.notify(`Unknown agent: ${name}`, "error");
+      return "back";
+    }
+    if (name === cfg.currentAgent) {
+      ctx.ui.notify(`Already on agent: ${name}`, "info");
+      return "reopen";
+    }
+    saveConfig({ currentAgent: name });
+    syncExtensionFilter(loadConfig());
+    ctx.ui.notify(`Switched to agent: ${name}, reloading…`, "info");
+    await ctx.reload();
+    return "reopen";
+  }
+  if (result.action === "status" && result.item) {
+    const name = result.item.data.id;
+    const cfg = loadConfig();
+    const manifest = readAgentManifest(cfg.repoPath, name);
+    const lines = [
+      `agent: ${name}`,
+      manifest.description ? `description: ${manifest.description}` : "",
+      `skills: ${manifest.skills.join(", ") || "(none)"}`,
+      `extensions: ${manifest.extensions.join(", ") || "(none)"}`,
+    ].filter((l) => l !== "");
+    ctx.ui.notify(lines.join("\n"), "info");
+    return "reopen";
+  }
+  return "back";
+}
+
+/** machines 层结果路由：pick machine → 只读展示文件内容 → "reopen"；
+ * cancel → "back"。 */
+export async function handleMachineListResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+): Promise<"back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const name = result.item.data.id;
+    const cfg = loadConfig();
+    if (!cfg.repoPath) return "back";
+    // 白名单校验防路径穿越（id 来自目录扫描，但结果可被伪造）
+    if (!/^[\w-]+$/.test(name)) {
+      ctx.ui.notify(`Invalid machine name: ${name}`, "error");
+      return "reopen";
+    }
+    try {
+      const content = readFileSync(join(cfg.repoPath, "machines", `${name}.json`), "utf-8");
+      ctx.ui.notify(`machine: ${name}\n${content.trim()}`, "info");
+    } catch {
+      ctx.ui.notify(`Cannot read machine file: ${name}`, "error");
+    }
+    return "reopen";
+  }
+  return "back";
+}
+
+/** 内容模型驱动导航主循环：按 level 状态机路由，构建列表 → 处理结果 → 切换
+ * 层级。Gateways 深入两级（providers → models）；Agents/Machines 单层；
+ * Sessions 直接调 session-browser。options.pi 由扩展层注入。 */
 export async function runConsole(
   ctx: ExtensionCommandContext,
   options: { pi?: ExtensionAPI; fetchImpl?: typeof fetch } = {},
@@ -536,7 +1076,7 @@ export async function runConsole(
     ctx.ui.notify(
       [
         cfg.repoUrl ? `repo: ${cfg.repoUrl}` : "repo: none — use /dpi a to bind",
-        "categories: Skills · Extensions · Gateways",
+        "categories: Agents · Skills · Extensions · Gateways · Sessions · Machines",
       ].join("\n"),
       "info",
     );
@@ -544,37 +1084,72 @@ export async function runConsole(
   }
 
   let level: ConsoleLevel = "top";
-  let currentKind: ItemKind = "gateway";
+  let currentGateway = "";
+  let currentProvider = "";
   for (;;) {
     const cfg = loadConfig();
-    const items =
-      level === "top"
-        ? buildTopItems(cfg)
-        : level === "category"
-          ? buildCategoryItems()
-          : buildItemList(cfg, currentKind);
-    const title =
-      level === "top" ? "dpi console" : level === "category" ? "dpi — category" : `dpi — ${currentKind}`;
-    const actions =
-      level === "top"
-        ? [
-            { key: "a", id: "add", hint: "add" },
-            { key: "s", id: "status", hint: "status" },
-          ]
-        : level === "items"
-          ? [
-              { key: "a", id: "add", hint: "add" },
-              { key: "d", id: "delete", hint: "delete" },
-              { key: "s", id: "status", hint: "status" },
-            ]
-          : undefined;
-    // 提示语按层级给准确含义：top 的 Esc 退出，category/items 的 Esc 逐级回退
-    const hint =
-      level === "top"
-        ? "j/k nav · / filter · Enter select · Esc quit"
-        : level === "category"
-          ? "j/k nav · / filter · Enter select · Esc back to top"
-          : "j/k nav · / filter · Enter select · Esc back to category";
+    let items: VimListItem<ConsoleNavData>[] = [];
+    let title = "dpi console";
+    let actions: VimListAction[] | undefined;
+    let hint = "";
+    switch (level) {
+      case "top":
+        items = buildTopItems(cfg);
+        title = "dpi console";
+        actions = [
+          { key: "a", id: "add", hint: "add" },
+          { key: "s", id: "status", hint: "status" },
+        ];
+        hint = "j/k nav · / filter · Enter select · Esc quit";
+        break;
+      case "category":
+        items = buildCategoryItems({ sessionsStatus: await formatSessionsStatus(cfg) });
+        title = "dpi — category";
+        hint = "j/k nav · / filter · Enter select · Esc back to top";
+        break;
+      case "gateways":
+        items = buildItemList(cfg, "gateway");
+        title = "dpi — gateways";
+        actions = [
+          { key: "a", id: "add", hint: "add" },
+          { key: "d", id: "delete", hint: "delete" },
+          { key: "s", id: "status", hint: "status" },
+        ];
+        hint = "j/k nav · / filter · Enter providers · Esc back to category";
+        break;
+      case "providers":
+        items = buildProviderList(cfg, currentGateway);
+        title = `dpi — ${currentGateway} providers`;
+        actions = [
+          { key: "a", id: "add", hint: "add provider" },
+          { key: "d", id: "delete", hint: "delete provider" },
+        ];
+        hint = "j/k nav · / filter · Enter models · Esc back to gateways";
+        break;
+      case "models":
+        items = buildModelList(cfg, currentGateway, currentProvider);
+        title = `dpi — ${currentGateway}/${currentProvider} models`;
+        actions = [
+          { key: "a", id: "add", hint: "add models" },
+          { key: "d", id: "delete", hint: "delete model" },
+        ];
+        hint = "j/k nav · / filter · Esc back to providers";
+        break;
+      case "agents":
+        items = buildAgentList(cfg);
+        title = "dpi — agents";
+        actions = [{ key: "s", id: "status", hint: "declaration summary" }];
+        hint = "j/k nav · / filter · Enter switch · Esc back to category";
+        break;
+      case "machines":
+        items = buildMachineList(cfg);
+        title = "dpi — machines";
+        hint = "j/k nav · / filter · Enter inspect · Esc back to category";
+        break;
+      default:
+        level = "top";
+        continue;
+    }
     const result = await showVimListPicker<ConsoleNavData>(ctx, {
       title,
       items,
@@ -591,17 +1166,46 @@ export async function runConsole(
       continue; // "reopen" 留在 top 层
     }
     if (level === "category") {
-      const next = await handleCategoryResult(ctx, result);
-      if (next === "enter") {
-        level = "items";
-        currentKind = "gateway";
+      const next = await handleCategoryResult(ctx, result, options);
+      if (next === "back") {
+        level = "top"; // Esc 或 registry manager / session browser 完成 → 回 top
       } else {
-        level = "top"; // "back"：Esc 或 registry manager 完成 → 回 top（再按 Esc 退出）
+        level = next; // "gateways" | "agents" | "machines"
       }
       continue;
     }
-    const next = await handleItemResult(ctx, result, options);
+    if (level === "gateways") {
+      const next = await handleGatewayListResult(ctx, result, options);
+      if (next === "providers" && result.item) {
+        currentGateway = result.item.data.id;
+        level = "providers";
+      } else if (next === "back") {
+        level = "category";
+      }
+      continue; // "reopen" 留在 gateways 层
+    }
+    if (level === "providers") {
+      const next = await handleProviderListResult(ctx, currentGateway, result, options);
+      if (next === "models" && result.item) {
+        currentProvider = result.item.data.id;
+        level = "models";
+      } else if (next === "back") {
+        level = "gateways";
+      }
+      continue; // "reopen" 留在 providers 层
+    }
+    if (level === "models") {
+      const next = await handleModelListResult(ctx, currentGateway, currentProvider, result, options);
+      if (next === "back") level = "providers";
+      continue; // "reopen" 留在 models 层
+    }
+    if (level === "agents") {
+      const next = await handleAgentListResult(ctx, result);
+      if (next === "back") level = "category";
+      continue; // "reopen" 留在 agents 层
+    }
+    const next = await handleMachineListResult(ctx, result);
     if (next === "back") level = "category";
-    // "reopen" 留在 items 层（列表已变化）
+    // "reopen" 留在 machines 层
   }
 }

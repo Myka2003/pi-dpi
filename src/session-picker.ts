@@ -32,6 +32,7 @@ export function showSessionPicker(
   currentAgent: string,
   onlyCurrent: boolean,
   currentSessionFile = "",
+  titlePrefix = "Session Archive",
 ): Promise<SessionPickerResult> {
   // KISS 布局：大小紧跟 agent（永远可见），标题用名字或短日期（不显示长文件名），
   // 当前会话置顶项加 * 标记（视觉区分）
@@ -49,7 +50,7 @@ export function showSessionPicker(
     });
 
   return showVimListPicker(ctx, {
-    title: onlyCurrent ? `Session Archive — ${currentAgent}` : "Session Archive",
+    title: onlyCurrent ? `${titlePrefix} — ${currentAgent}` : titlePrefix,
     items,
     mode: "select",
     actions: [{ key: "c", id: "cycle-filter", hint: "c filter" }],

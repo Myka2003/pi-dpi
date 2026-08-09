@@ -213,18 +213,20 @@ async function deleteArchived(
   return true;
 }
 
-export default function (pi: ExtensionAPI) {
-  // /dpi-sessions：浏览仓库存档会话（git 元数据），一键恢复到本机并切换
-  registerDpiCommand(pi, "dpi-sessions", {
-    description: "Browse archived sessions (vim nav: j/k, gg/G, / filter), restore and switch",
-    handler: async (_args, ctx) => {
-      const cfg = loadConfig();
-      if (!cfg.repoUrl) {
-        ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
-        return;
-      }
-      const repo = cfg.repoPath;
-      const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
+/** 会话浏览器主逻辑（/dpi-sessions 与 /dpi 控制台 Sessions 分类共用）。
+ * options.titlePrefix 供控制台附加状态行（record on/off · 最后归档 · 未推送数）。 */
+export async function runSessionBrowser(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  options: { titlePrefix?: string } = {},
+): Promise<void> {
+  const cfg = loadConfig();
+  if (!cfg.repoUrl) {
+    ctx.ui.notify("No content repo bound, run /dpi-agent-login first", "warning");
+    return;
+  }
+  const repo = cfg.repoPath;
+  const agent = /^[\w-]+$/.test(cfg.currentAgent) ? cfg.currentAgent : "coder";
 
       // 列表本地化：3 秒监听已后台维护 origin/main（最多滞后 3 秒），
       // 打开不再同步 fetch——ls-tree + 名字索引全本地，毫秒级显示
@@ -267,7 +269,7 @@ export default function (pi: ExtensionAPI) {
         } catch {
           curFile = "";
         }
-        const picked = await showSessionPicker(ctx, archivedNow, agent, onlyCurrent, curFile);
+        const picked = await showSessionPicker(ctx, archivedNow, agent, onlyCurrent, curFile, options.titlePrefix);
         if (picked === "cycle-filter") {
           onlyCurrent = !onlyCurrent;
           continue;
@@ -309,6 +311,14 @@ export default function (pi: ExtensionAPI) {
         }
         // BACK_ITEM / 取消：回到选择器
       }
+}
+
+export default function (pi: ExtensionAPI) {
+  // /dpi-sessions：浏览仓库存档会话（git 元数据），一键恢复到本机并切换
+  registerDpiCommand(pi, "dpi-sessions", {
+    description: "Browse archived sessions (vim nav: j/k, gg/G, / filter), restore and switch",
+    handler: async (_args, ctx) => {
+      await runSessionBrowser(pi, ctx);
     },
   });
 }

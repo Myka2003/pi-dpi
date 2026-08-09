@@ -5,24 +5,34 @@
  * 约定：HOME 指到临时目录隔离 config 与 credential store；add-gateway 的
  * 网络调用通过 vi.stubGlobal("fetch") 注入 mock，保证测试免网络。
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { saveConfig } from "../src/config.ts";
+import { loadConfig, saveConfig } from "../src/config.ts";
 import { readCredential, writeCredential } from "../src/credential-store.ts";
 import {
   buildConsoleItems,
   buildTopItems,
   buildCategoryItems,
   buildItemList,
+  buildProviderList,
+  buildModelList,
+  buildAgentList,
+  buildMachineList,
   handleConsoleResult,
   handleTopResult,
   handleCategoryResult,
   handleItemResult,
+  handleGatewayListResult,
+  handleProviderListResult,
+  handleModelListResult,
+  handleAgentListResult,
+  handleMachineListResult,
 } from "../src/dpi-console.ts";
 import { scanGatewayProfiles } from "../src/gateway-profile.ts";
-import { buildGatewayProfile } from "../src/gateway-writer.ts";
+import { addProviderToGateway, buildGatewayProfile, commitPushGateway, writeGatewayProfile } from "../src/gateway-writer.ts";
 import { bindRepoWithKey } from "../src/repo-binder.ts";
 import type { ConsoleItemData, ConsoleNavData } from "../src/dpi-console.ts";
 import type { VimListItem, VimListResult } from "../src/vim-list-picker.ts";
@@ -40,6 +50,7 @@ beforeEach(() => {
 
 let repo = "";
 let home = "";
+let bare = "";
 
 function makeRepo(): string {
   repo = mkdtempSync(join(tmpdir(), "dpi-console-"));
@@ -74,9 +85,12 @@ function seedRepo(): void {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   if (repo) rmSync(repo, { recursive: true, force: true });
+  if (bare) rmSync(bare, { recursive: true, force: true });
   if (home) rmSync(home, { recursive: true, force: true });
   repo = "";
+  bare = "";
   home = "";
 });
 
@@ -85,9 +99,50 @@ interface UiState {
   inputQueue: string[];
 }
 
-/** 最小 ctx stub：input 按队列吐值，notify 记录调用 */
-function makeCtx(): { ctx: never; state: UiState } {
+/** 真实 git 仓库（本地 bare 远端）：供应商/模型增删的 commit+push 全链路可用 */
+function makeGitRepo(): { work: string; bare: string } {
+  const work = mkdtempSync(join(tmpdir(), "dpi-console-git-work-"));
+  const barePath = mkdtempSync(join(tmpdir(), "dpi-console-git-bare-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: work });
+  execFileSync("git", ["init", "--bare", "-b", "main", barePath]);
+  execFileSync("git", ["remote", "add", "origin", barePath], { cwd: work });
+  execFileSync(
+    "git",
+    ["-C", work, "-c", "user.name=dpi", "-c", "user.email=dpi@users.noreply.github.com", "commit", "--allow-empty", "-m", "init"],
+  );
+  execFileSync("git", ["-C", work, "push", "-u", "origin", "main"]);
+  mkdirSync(join(work, "profiles", "gateways"), { recursive: true });
+  return { work, bare: barePath };
+}
+
+/** 在真实 git 仓库里铺一个 gateway 并 commit+push，返回 work 路径 */
+async function seedGitGateway(): Promise<string> {
+  const git = makeGitRepo();
+  repo = git.work;
+  bare = git.bare;
+  const profile = buildGatewayProfile({
+    id: "ser7-cpa",
+    label: "ser7 CPA",
+    baseUrl: "http://100.102.192.34:8317/v1",
+    credentialRef: "ser7-cpa",
+    providerId: "ser7-cpa",
+    api: "openai-completions",
+    models: [{ id: "deepseek-v4-flash" }],
+  })!;
+  writeGatewayProfile(git.work, profile);
+  const added = await commitPushGateway(git.work, "ser7-cpa", "feat: add gateway");
+  expect(added.committed).toBe(true);
+  expect(added.pushed).toBe(true);
+  return git.work;
+}
+
+/**
+ * 最小 ctx stub：input 按队列吐值，notify 记录调用，custom 按队列吐
+ * VimListResult（供应商/模型 toggle 选择器用；空队列返回 undefined）。
+ */
+function makeCtx(customQueue: VimListResult<never>[] = []): { ctx: never; state: UiState } {
   const state: UiState = { notifyCalls: [], inputQueue: [] };
+  const queue = [...customQueue];
   const ctx = {
     hasUI: true,
     ui: {
@@ -97,8 +152,9 @@ function makeCtx(): { ctx: never; state: UiState } {
       },
       confirm: async () => true,
       select: async () => "",
-      custom: async () => undefined,
+      custom: async () => queue.shift(),
     },
+    reload: async () => {},
   };
   return { ctx: ctx as never, state };
 }
@@ -397,12 +453,10 @@ describe("three-level navigation", () => {
     expect(items[0].data.id).toBe("add");
   });
 
-  it("category level lists Skills/Extensions/Gateways", () => {
+  it("category level lists the six fixed categories", () => {
     const items = buildCategoryItems();
     const kinds = items.map((i) => i.data.id);
-    expect(kinds).toContain("Skills");
-    expect(kinds).toContain("Extensions");
-    expect(kinds).toContain("Gateways");
+    expect(kinds).toEqual(["Agents", "Skills", "Extensions", "Gateways", "Sessions", "Machines"]);
     for (const item of items) {
       expect(item.data.level).toBe("category");
       expect(item.data.kind).toBe("category");
@@ -443,7 +497,7 @@ describe("three-level navigation", () => {
     expect(msg).toContain("repoUrl missing");
   });
 
-  it("handleCategoryResult Skills/Extensions run the registry manager; Gateways enters items", async () => {
+  it("handleCategoryResult Skills/Extensions run the registry manager; Agents/Gateways/Machines enter their lists", async () => {
     useTempHome();
     const repoPath = makeRepo();
     seedRepo();
@@ -463,7 +517,17 @@ describe("three-level navigation", () => {
       action: "pick",
       item: { id: "Gateways", label: "Gateways", data: { level: "category", kind: "category", id: "Gateways", meta: "" } },
     });
-    expect(gateways).toBe("enter");
+    expect(gateways).toBe("gateways");
+    const agents = await handleCategoryResult(ctx, {
+      action: "pick",
+      item: { id: "Agents", label: "Agents", data: { level: "category", kind: "category", id: "Agents", meta: "" } },
+    });
+    expect(agents).toBe("agents");
+    const machines = await handleCategoryResult(ctx, {
+      action: "pick",
+      item: { id: "Machines", label: "Machines", data: { level: "category", kind: "category", id: "Machines", meta: "" } },
+    });
+    expect(machines).toBe("machines");
     const esc = await handleCategoryResult(ctx, { action: "cancel" });
     expect(esc).toBe("back");
   });
@@ -527,5 +591,261 @@ describe("three-level navigation", () => {
     const { ctx } = makeCtx();
     const next = await handleItemResult(ctx, { action: "cancel" }, {});
     expect(next).toBe("back");
+  });
+});
+
+describe("content-model console — gateways providers/models navigation", () => {
+  it("builds provider and model lists from the gateway profile", () => {
+    const repoPath = makeRepo();
+    seedRepo();
+    const providers = buildProviderList({ repoPath }, "ser7-cpa");
+    expect(providers[0].data.kind).toBe("provider");
+    expect(providers[0].data.id).toBe("ser7-cpa");
+    expect(providers[0].meta).toContain("model");
+    const models = buildModelList({ repoPath }, "ser7-cpa", "ser7-cpa");
+    expect(models[0].data.kind).toBe("model");
+    expect(models[0].data.id).toBe("deepseek-v4-flash");
+    // 未知 gateway/provider → 空列表
+    expect(buildProviderList({ repoPath }, "nope")).toEqual([]);
+    expect(buildModelList({ repoPath }, "ser7-cpa", "nope")).toEqual([]);
+  });
+
+  it("handleGatewayListResult pick on a gateway enters providers; unknown gateway notifies error", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleGatewayListResult(ctx, {
+      action: "pick",
+      item: {
+        id: "gateway:ser7-cpa",
+        label: "[gateway] ser7-cpa",
+        data: { level: "items", kind: "gateway", id: "ser7-cpa", meta: "" },
+      },
+    });
+    expect(next).toBe("providers");
+    const bad = await handleGatewayListResult(ctx, {
+      action: "pick",
+      item: {
+        id: "gateway:nope",
+        label: "[gateway] nope",
+        data: { level: "items", kind: "gateway", id: "nope", meta: "" },
+      },
+    });
+    expect(bad).toBe("back");
+    expect(state.notifyCalls.some((n) => n.message.includes("Unknown gateway: nope"))).toBe(true);
+  });
+
+  it("provider pick enters models; unknown provider notifies error", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleProviderListResult(ctx, "ser7-cpa", {
+      action: "pick",
+      item: {
+        id: "ser7-cpa",
+        label: "[provider] ser7-cpa",
+        data: { level: "providers", kind: "provider", id: "ser7-cpa", meta: "openai-completions" },
+      },
+    });
+    expect(next).toBe("models");
+    const bad = await handleProviderListResult(ctx, "ser7-cpa", {
+      action: "pick",
+      item: {
+        id: "nope",
+        label: "[provider] nope",
+        data: { level: "providers", kind: "provider", id: "nope", meta: "" },
+      },
+    });
+    expect(bad).toBe("back");
+    expect(state.notifyCalls.some((n) => n.message.includes("Unknown provider: nope"))).toBe(true);
+  });
+
+  it("provider add flow: /models toggle → addProviderToGateway committed+pushed", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }, { id: "m2" }] }));
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+
+    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
+    state.inputQueue = ["p2", "P2", "openai-completions"];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
+    const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
+    const p2 = gateway.providers.find((p) => p.id === "p2")!;
+    expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("provider delete flow removes the provider committed+pushed", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const added = await addProviderToGateway(
+      work,
+      "ser7-cpa",
+      { id: "p2", name: "P2", api: "openai-completions", models: [{ id: "m1" }] },
+      "feat: add p2",
+    );
+    expect(added.ok).toBe(true);
+
+    const { ctx, state } = makeCtx();
+    const next = await handleProviderListResult(ctx, "ser7-cpa", {
+      action: "delete",
+      item: {
+        id: "p2",
+        label: "[provider] p2",
+        data: { level: "providers", kind: "provider", id: "p2", meta: "" },
+      },
+    });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 removed"))).toBe(true);
+    const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
+    expect(gateway.providers.map((p) => p.id)).toEqual(["ser7-cpa"]);
+  });
+
+  it("model add flow appends new models from /models, skipping already-present ones", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }, { id: "m2" }] }));
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const added = await addProviderToGateway(
+      work,
+      "ser7-cpa",
+      { id: "p2", name: "P2", api: "openai-completions", models: [{ id: "m1" }] },
+      "feat: add p2",
+    );
+    expect(added.ok).toBe(true);
+
+    // 勾选集含已存在的 m1 → 只追加 m2
+    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
+    const next = await handleModelListResult(ctx, "ser7-cpa", "p2", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Added 1 model to p2"))).toBe(true);
+    const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
+    expect(gateway.providers.find((p) => p.id === "p2")!.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("model delete flow removes the model committed+pushed", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const added = await addProviderToGateway(
+      work,
+      "ser7-cpa",
+      { id: "p2", name: "P2", api: "openai-completions", models: [{ id: "m1" }, { id: "m2" }] },
+      "feat: add p2",
+    );
+    expect(added.ok).toBe(true);
+
+    const { ctx, state } = makeCtx();
+    const next = await handleModelListResult(ctx, "ser7-cpa", "p2", {
+      action: "delete",
+      item: {
+        id: "m1",
+        label: "[model] m1",
+        data: { level: "models", kind: "model", id: "m1", meta: "" },
+      },
+    });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Model m1 removed"))).toBe(true);
+    const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
+    expect(gateway.providers.find((p) => p.id === "p2")!.models.map((m) => m.id)).toEqual(["m2"]);
+  });
+});
+
+describe("content-model console — agents and machines", () => {
+  function seedAgents(): void {
+    for (const name of ["coder", "researcher"]) {
+      mkdirSync(join(repo, "agents", name), { recursive: true });
+      writeFileSync(join(repo, "agents", name, "SYSTEM.md"), `# ${name}\n`);
+    }
+    writeFileSync(
+      join(repo, "agents", "coder", "agent.json"),
+      JSON.stringify({ description: "default coder", skills: [], extensions: [] }),
+    );
+    writeFileSync(
+      join(repo, "agents", "researcher", "agent.json"),
+      JSON.stringify({ description: "research agent", skills: ["memory"], extensions: [] }),
+    );
+  }
+
+  it("buildAgentList lists agents and marks the current one", () => {
+    const repoPath = makeRepo();
+    seedAgents();
+    const items = buildAgentList({ repoPath, currentAgent: "coder" });
+    expect(items.map((i) => i.data.id)).toEqual(["coder", "researcher"]);
+    expect(items.find((i) => i.data.id === "coder")!.meta).toContain("current *");
+    expect(items.find((i) => i.data.id === "researcher")!.meta).toBe("");
+  });
+
+  it("handleAgentListResult pick switches the current agent and reloads", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedAgents();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleAgentListResult(ctx, {
+      action: "pick",
+      item: { id: "researcher", label: "researcher", data: { level: "agents", kind: "agent", id: "researcher", meta: "" } },
+    });
+    expect(next).toBe("reopen");
+    expect(loadConfig().currentAgent).toBe("researcher");
+    expect(state.notifyCalls.some((n) => n.message.includes("Switched to agent: researcher"))).toBe(true);
+  });
+
+  it("handleAgentListResult status shows the declaration summary", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedAgents();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleAgentListResult(ctx, {
+      action: "status",
+      item: { id: "researcher", label: "researcher", data: { level: "agents", kind: "agent", id: "researcher", meta: "" } },
+    });
+    expect(next).toBe("reopen");
+    const msg = state.notifyCalls.at(-1)?.message ?? "";
+    expect(msg).toContain("agent: researcher");
+    expect(msg).toContain("skills: memory");
+  });
+
+  it("buildMachineList lists machine files; pick shows the content read-only", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, "machines"), { recursive: true });
+    writeFileSync(join(repoPath, "machines", "macbook-air.json"), JSON.stringify({ proxy: "" }));
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const items = buildMachineList({ repoPath });
+    expect(items[0].data.kind).toBe("machine");
+    expect(items[0].data.id).toBe("macbook-air");
+    const { ctx, state } = makeCtx();
+    const next = await handleMachineListResult(ctx, {
+      action: "pick",
+      item: { id: "macbook-air", label: "[machine] macbook-air", data: { level: "machines", kind: "machine", id: "macbook-air", meta: "" } },
+    });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.at(-1)?.message).toContain('"proxy"');
+  });
+
+  it("handleMachineListResult rejects a path-traversal id", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, "machines"), { recursive: true });
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleMachineListResult(ctx, {
+      action: "pick",
+      item: { id: "../../etc/passwd", label: "x", data: { level: "machines", kind: "machine", id: "../../etc/passwd", meta: "" } },
+    });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Invalid machine name"))).toBe(true);
   });
 });

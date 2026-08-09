@@ -33,7 +33,7 @@ export interface GatewayProfile {
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const SENSITIVE_KEY_RE = /(?:^|[-_])(api[-_]?key|token|secret|password|oauth|private[-_]?key|credential[-_]?value)(?:$|[-_])/i;
-const ALLOWED_APIS = new Set([
+export const ALLOWED_APIS = new Set([
   "openai-completions",
   "openai-responses",
   "anthropic-messages",

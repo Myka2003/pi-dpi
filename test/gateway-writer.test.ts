@@ -4,10 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addModelsToProvider,
+  addProviderToGateway,
   buildGatewayProfile,
   commitPushGateway,
   deleteGatewayProfile,
   ensureGatewayDirsSparse,
+  removeModel,
+  removeProvider,
   writeGatewayProfile,
 } from "../src/gateway-writer.ts";
 import { parseGatewayProfile, scanGatewayProfiles } from "../src/gateway-profile.ts";
@@ -65,6 +69,96 @@ async function withoutGlobalIdentity<T>(fn: () => Promise<T>): Promise<T> {
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("gateway provider/model management", () => {
+  it("adds a provider, adds models, removes model, removes provider — all committed+pushed", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    let r = await addProviderToGateway(
+      work,
+      "gw",
+      { id: "p2", name: "P2", api: "openai-completions", models: [{ id: "b" }, { id: "c" }] },
+      "add p2",
+    );
+    expect(r.ok).toBe(true);
+    expect(scanGatewayProfiles(work)[0].providers.map((p) => p.id)).toContain("p2");
+
+    r = await addModelsToProvider(work, "gw", "p2", [{ id: "d" }], "add d");
+    expect(r.ok).toBe(true);
+    const p2 = scanGatewayProfiles(work)[0].providers.find((p) => p.id === "p2")!;
+    expect(p2.models.map((m) => m.id)).toEqual(["b", "c", "d"]);
+
+    r = await removeModel(work, "gw", "p2", "c", "rm c");
+    expect(r.ok).toBe(true);
+    expect(
+      scanGatewayProfiles(work)[0].providers.find((p) => p.id === "p2")!.models.map((m) => m.id),
+    ).toEqual(["b", "d"]);
+
+    r = await removeProvider(work, "gw", "p2", "rm p2");
+    expect(r.ok).toBe(true);
+    expect(scanGatewayProfiles(work)[0].providers.map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("returns ok:false without throwing when the provider already exists", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    const r = await addProviderToGateway(
+      work,
+      "gw",
+      { id: "p1", api: "openai-completions", models: [{ id: "x" }] },
+      "dup p1",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("exists");
+    // 未发生任何写入/提交
+    expect(scanGatewayProfiles(work)[0].providers.map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("returns ok:false without throwing for a missing provider on addModels/removeModel", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    const r1 = await addModelsToProvider(work, "gw", "nope", [{ id: "x" }], "add to nope");
+    expect(r1.ok).toBe(false);
+    expect(r1.error).toContain("missing");
+
+    const r2 = await removeModel(work, "gw", "nope", "a", "rm from nope");
+    expect(r2.ok).toBe(false);
+    expect(r2.error).toContain("missing");
+  });
 });
 
 describe("gateway writer", () => {
