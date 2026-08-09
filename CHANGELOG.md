@@ -2,6 +2,12 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.37
+
+- Make dpi config writes atomic, backup-recoverable, and concurrency-safe.
+- Add `/dpi-repo status|doctor|repair` for idempotent Agent repo recovery.
+- Add `/dpi-gateway status|doctor` with credential and `/models` health diagnostics.
+
 ## [0.8.35] - 2026-08-05
 
 ### Fixed
