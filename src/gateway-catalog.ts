@@ -82,6 +82,10 @@ export interface PiCatalogEntry {
   maxTokens?: number;
   reasoning?: boolean;
   api?: string;
+  /** 官方思考等级映射（如 deepseek-v4 仅 high/max；kimi-k3 无 xhigh） */
+  thinkingLevelMap?: Record<string, string | null>;
+  /** 官方兼容参数（thinkingFormat、supportsReasoningEffort 等模型行为） */
+  compat?: Record<string, unknown>;
 }
 
 const _piCatalog: { map: Map<string, PiCatalogEntry>; path: string } = { map: new Map(), path: "" };
@@ -105,6 +109,16 @@ export function loadPiModelCatalog(storePath?: string): Map<string, PiCatalogEnt
         if (typeof entry.maxTokens === "number") out.maxTokens = entry.maxTokens;
         if (typeof entry.reasoning === "boolean") out.reasoning = entry.reasoning;
         if (typeof entry.api === "string") out.api = entry.api;
+        if (typeof entry.thinkingLevelMap === "object" && entry.thinkingLevelMap !== null) {
+          const tlm: Record<string, string | null> = {};
+          for (const [k, v] of Object.entries(entry.thinkingLevelMap as Record<string, unknown>)) {
+            if (v === null || typeof v === "string") tlm[k] = v as string | null;
+          }
+          if (Object.keys(tlm).length > 0) out.thinkingLevelMap = tlm;
+        }
+        if (typeof entry.compat === "object" && entry.compat !== null) {
+          out.compat = entry.compat as Record<string, unknown>;
+        }
         _piCatalog.map.set(id, out);
       }
     }
@@ -112,6 +126,16 @@ export function loadPiModelCatalog(storePath?: string): Map<string, PiCatalogEnt
     // 无缓存或不可读：规则兜底
   }
   return _piCatalog.map;
+}
+
+/**
+ * 思考能力推断（官方目录未命中时兜底）：主流思考模型家族 → true。
+ * 与 inferModelApi 同理，官方目录（pi 登录供应商自动拉取）优先，这里只兜底。
+ */
+export function inferReasoning(modelId: string): boolean {
+  const fam = modelId.slice(modelId.lastIndexOf("/") + 1).toLowerCase();
+  if (/^(gpt-5|o[134]-|claude-|gemini-|deepseek-|kimi-|moonshot-|qwen-|glm-|mistral-|llama-|grok-|command-)/.test(fam)) return true;
+  return false;
 }
 
 export async function fetchGatewayModels(
@@ -138,10 +162,14 @@ export async function fetchGatewayModels(
         input: ["text"] as GatewayModel["input"],
         contextWindow: id !== "" ? (official?.contextWindow ?? inferContextWindow(id)) : undefined,
         maxTokens: id !== "" ? official?.maxTokens : undefined,
-        reasoning: id !== "" ? official?.reasoning : undefined,
+        reasoning: id !== "" ? (official?.reasoning ?? inferReasoning(id)) : undefined,
         // 官方目录标注的 api 优先（如 kimi k3 官方 anthropic-messages）；
         // 其余用家族推断（gpt-5 系 → openai-responses，实测中转站必需）
         api: id !== "" ? (official?.api ?? inferModelApi(id)) : undefined,
+        // 思考等级映射与 compat 仅来自官方目录（pi.dev 权威值，如 deepseek 的
+        // thinkingFormat、kimi 无 xhigh 等）；目录未命中则省略，pi 按默认处理
+        thinkingLevelMap: id !== "" ? official?.thinkingLevelMap : undefined,
+        compat: id !== "" ? official?.compat : undefined,
       };
     })
     .filter((m) => m.id !== "");

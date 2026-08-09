@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchGatewayModels } from "../src/gateway-catalog.ts";
+import { fetchGatewayModels, inferReasoning } from "../src/gateway-catalog.ts";
 
 describe("gateway catalog", () => {
   it("imports flat data[] as models without grouping", async () => {
@@ -59,5 +59,54 @@ describe("pi official model catalog priority", () => {
     expect(byId["gpt-5.6-luna"].api).toBe("openai-responses");
     expect(byId["claude-sonnet-4-5"].contextWindow).toBe(200000);
     expect(byId["claude-sonnet-4-5"].api).toBeUndefined();
+  });
+});
+
+describe("inferReasoning", () => {
+  it.each([
+    ["gpt-5.6-luna", true],
+    ["claude-sonnet-4-5", true],
+    ["deepseek-v4-pro", true],
+    ["o4-mini", true],
+    ["babbage-002", false],
+    ["dall-e-3", false],
+    ["apimart/gpt-5.6-terra", true],
+  ])("%s -> %s", (id, expected) => {
+    expect(inferReasoning(id)).toBe(expected);
+  });
+});
+
+describe("official catalog reasoning priority", () => {
+  it("official reasoning wins over inference", async () => {
+    const storePath = "/tmp/pi-models-store-test2.json";
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(storePath, JSON.stringify({
+      deepseek: { models: [{ id: "deepseek-v4-flash", reasoning: false }] },
+    }));
+    const models = await fetchGatewayModels("https://api.example.com/v1", "sk-x", {
+      catalogStorePath: storePath,
+      fetchImpl: async () => new Response(JSON.stringify({ data: [{ id: "deepseek-v4-flash" }] }), { status: 200 }),
+    } as never);
+    expect(models[0].reasoning).toBe(false); // 官方显式 false 覆盖家族规则 true
+  });
+});
+
+describe("official thinkingLevelMap and compat passthrough", () => {
+  it("carries thinkingLevelMap and compat from the pi catalog", async () => {
+    const storePath = "/tmp/pi-models-store-test3.json";
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(storePath, JSON.stringify({
+      deepseek: { models: [{
+        id: "deepseek-v4-flash",
+        thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+        compat: { supportsStore: false, thinkingFormat: "deepseek" },
+      }] },
+    }));
+    const models = await fetchGatewayModels("https://api.example.com/v1", "sk-x", {
+      catalogStorePath: storePath,
+      fetchImpl: async () => new Response(JSON.stringify({ data: [{ id: "deepseek-v4-flash" }] }), { status: 200 }),
+    } as never);
+    expect(models[0].thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null, high: "high", max: "max" });
+    expect(models[0].compat).toEqual({ supportsStore: false, thinkingFormat: "deepseek" });
   });
 });
