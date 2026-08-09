@@ -157,7 +157,9 @@ export function deriveGatewayIdFromUrl(url: string): string | null {
   }
   const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
   if (!host) return null;
-  const id = host
+  // 去掉常见 TLD 后缀（com/net/org/io/ai/cc/dev/app/me），sui-xiang.com → sui-xiang
+  const withoutTld = host.replace(/\.(com|net|org|io|ai|cc|dev|app|me)$/, "");
+  const id = withoutTld
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");

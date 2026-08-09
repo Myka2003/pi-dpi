@@ -206,11 +206,11 @@ describe("dpi console — URL helpers", () => {
   });
 
   it("deriveGatewayIdFromUrl strips www, lowercases, and replaces invalid chars with dashes", () => {
-    expect(deriveGatewayIdFromUrl("https://sui-xiang.com")).toBe("sui-xiang-com");
-    expect(deriveGatewayIdFromUrl("https://www.Sui-Xiang.com")).toBe("sui-xiang-com");
-    expect(deriveGatewayIdFromUrl("https://api.openai.com/v1")).toBe("api-openai-com");
+    expect(deriveGatewayIdFromUrl("https://sui-xiang.com")).toBe("sui-xiang");
+    expect(deriveGatewayIdFromUrl("https://www.Sui-Xiang.com")).toBe("sui-xiang");
+    expect(deriveGatewayIdFromUrl("https://api.openai.com/v1")).toBe("api-openai");
     expect(deriveGatewayIdFromUrl("http://100.102.192.34:8317")).toBe("100-102-192-34");
-    expect(deriveGatewayIdFromUrl("https://sui--xiang.com")).toBe("sui-xiang-com");
+    expect(deriveGatewayIdFromUrl("https://sui--xiang.com")).toBe("sui-xiang");
   });
 
   it("deriveGatewayIdFromUrl returns null for unparseable or empty hosts", () => {
