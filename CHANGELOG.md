@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.47
+
+- Scope gateway commits to the target profile only (never sweep pre-staged session blobs).
+
 ## 0.8.46
 
 - Gateway add flow accepts pasted URLs (auto id from host, auto `/v1` baseUrl); provider add gives guidance for URL-like ids.
