@@ -136,10 +136,64 @@ export function buildConsoleItems(cfg: ConsoleItemsConfig): VimListItem<ConsoleI
   return items;
 }
 
+// ----------------------------------------------------------------------------
+// URL helper（0.8.46）：gateway add 流程支持直接粘贴 URL 作为 id / baseUrl。
+// ----------------------------------------------------------------------------
+
+/** 输入是否为 http(s) URL（区分「URL 被误粘贴进 id 字段」与「普通非法 id」）。 */
+export function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s);
+}
+
+/** 从 URL 推导合法 gateway id：hostname 去 www. 前缀、小写、非法字符
+ * （非 [a-z0-9-]）替换为 `-`、折叠连续 `-`、去掉首尾 `-`；URL 解析失败或
+ * host 为空（推导结果为空）时返回 null。 */
+export function deriveGatewayIdFromUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (!host) return null;
+  const id = host
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return id === "" ? null : id;
+}
+
+/** 规范化 gateway baseUrl：路径为空或 `/` 时补 `/v1`，不以 `/v1` 结尾时追加
+ * `/v1`，丢弃 query/hash（validBaseUrl 禁止）；协议必须 http/https；解析失败
+ * 返回 null。 */
+export function normalizeGatewayBaseUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+  if (pathname === "/") {
+    parsed.pathname = "/v1";
+  } else if (!pathname.endsWith("/v1")) {
+    parsed.pathname = `${pathname}/v1`;
+  } else {
+    parsed.pathname = pathname;
+  }
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
 /**
  * add-gateway 流程（严格按顺序）：
  * 输入 id/label/baseUrl/key → fetchGatewayModels → buildGatewayProfile（schema 2，
  * key 直接写进 profile）→ writeGatewayProfile → commitPushGateway → notify。
+ * id 字段可直接粘贴 URL（https://sui-xiang.com）：自动推导 gateway id 并记忆
+ * 规范化后的 baseUrl（补 /v1）作为默认值。
  * schema 2 不再创建 credential（私有仓库即安全边界）；失败即返回，不留半成品。
  * options.fetchImpl 仅测试注入用；key 只传给 fetchGatewayModels 与 profile，
  * 绝不进 notify / 日志。
@@ -153,13 +207,41 @@ export async function addGatewayFlow(
     ctx.ui.notify("No content repo bound; add one first (a → repo)", "warning");
     return;
   }
-  const id = ((await ctx.ui.input("Gateway id (lowercase, dashes ok)", "")) ?? "").trim();
+  const idInput = (
+    (await ctx.ui.input("Gateway id or URL (e.g. sui-xiang or https://sui-xiang.com)", "")) ?? ""
+  ).trim();
+  let id = idInput;
+  let derivedBaseUrl = "";
+  if (looksLikeUrl(idInput)) {
+    const derivedId = deriveGatewayIdFromUrl(idInput);
+    if (derivedId === null) {
+      ctx.ui.notify(
+        `Invalid gateway id: ${idInput} — could not derive an id from that URL (use lowercase letters/digits/dashes, e.g. apimart)`,
+        "error",
+      );
+      return;
+    }
+    id = derivedId;
+    derivedBaseUrl = normalizeGatewayBaseUrl(idInput) ?? "";
+    if (!derivedBaseUrl) {
+      ctx.ui.notify(`Invalid base URL: ${idInput} — expected http(s)://host[/v1]`, "error");
+      return;
+    }
+  }
   if (!validateRef(id)) {
-    ctx.ui.notify(`Invalid gateway id: ${id}`, "error");
+    ctx.ui.notify(
+      `Invalid gateway id: ${id} — use lowercase letters/digits/dashes, e.g. apimart`,
+      "error",
+    );
     return;
   }
   const label = ((await ctx.ui.input("Label", id)) ?? "").trim() || id;
-  const baseUrl = ((await ctx.ui.input("Base URL (…/v1)", "")) ?? "").trim();
+  const baseUrl = (
+    (await ctx.ui.input(
+      `Base URL (…/v1)${derivedBaseUrl ? `, Enter = ${derivedBaseUrl}` : ""}`,
+      derivedBaseUrl,
+    )) ?? ""
+  ).trim() || derivedBaseUrl;
   const key = ((await ctx.ui.input("API key", "")) ?? "").trim();
   if (!baseUrl || !key) {
     ctx.ui.notify("baseUrl and API key are required", "error");
@@ -725,7 +807,14 @@ export async function addProviderFlow(
   }
   const id = ((await ctx.ui.input("Provider id (lowercase, dashes ok)", "")) ?? "").trim();
   if (!validateRef(id)) {
-    ctx.ui.notify(`Invalid provider id: ${id}`, "error");
+    if (looksLikeUrl(id)) {
+      ctx.ui.notify(
+        `Looks like a URL — providers live inside gateway ${gatewayId}; to add an independent gateway use 'a' on the Gateways list instead (id like 'apimart')`,
+        "error",
+      );
+    } else {
+      ctx.ui.notify(`Invalid provider id: ${id}`, "error");
+    }
     return;
   }
   if (profile.providers.some((p) => p.id === id)) {

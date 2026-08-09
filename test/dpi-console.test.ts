@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { readCredential, writeCredential } from "../src/credential-store.ts";
 import {
+  addGatewayFlow,
   buildConsoleItems,
   buildTopItems,
   buildCategoryItems,
@@ -21,6 +22,7 @@ import {
   buildModelList,
   buildAgentList,
   buildMachineList,
+  deriveGatewayIdFromUrl,
   formatSessionsStatus,
   handleConsoleResult,
   handleTopResult,
@@ -31,6 +33,8 @@ import {
   handleModelListResult,
   handleAgentListResult,
   handleMachineListResult,
+  looksLikeUrl,
+  normalizeGatewayBaseUrl,
 } from "../src/dpi-console.ts";
 import { scanGatewayProfiles } from "../src/gateway-profile.ts";
 import { addProviderToGateway, buildGatewayProfile, commitPushGateway, writeGatewayProfile } from "../src/gateway-writer.ts";
@@ -191,6 +195,50 @@ function mockFetch(payload: { data: { id: string }[] }, error?: Error): typeof f
   }) as unknown as typeof fetch;
 }
 
+describe("dpi console — URL helpers", () => {
+  it("looksLikeUrl matches http(s):// prefixes only", () => {
+    expect(looksLikeUrl("https://sui-xiang.com")).toBe(true);
+    expect(looksLikeUrl("http://sui-xiang.com")).toBe(true);
+    expect(looksLikeUrl("HTTPS://Sui-Xiang.com")).toBe(true);
+    expect(looksLikeUrl("sui-xiang.com")).toBe(false);
+    expect(looksLikeUrl("sui-xiang")).toBe(false);
+    expect(looksLikeUrl("")).toBe(false);
+  });
+
+  it("deriveGatewayIdFromUrl strips www, lowercases, and replaces invalid chars with dashes", () => {
+    expect(deriveGatewayIdFromUrl("https://sui-xiang.com")).toBe("sui-xiang-com");
+    expect(deriveGatewayIdFromUrl("https://www.Sui-Xiang.com")).toBe("sui-xiang-com");
+    expect(deriveGatewayIdFromUrl("https://api.openai.com/v1")).toBe("api-openai-com");
+    expect(deriveGatewayIdFromUrl("http://100.102.192.34:8317")).toBe("100-102-192-34");
+    expect(deriveGatewayIdFromUrl("https://sui--xiang.com")).toBe("sui-xiang-com");
+  });
+
+  it("deriveGatewayIdFromUrl returns null for unparseable or empty hosts", () => {
+    expect(deriveGatewayIdFromUrl("")).toBeNull();
+    expect(deriveGatewayIdFromUrl("not a url")).toBeNull();
+    expect(deriveGatewayIdFromUrl("https://")).toBeNull();
+    expect(deriveGatewayIdFromUrl("https://.")).toBeNull();
+  });
+
+  it("normalizeGatewayBaseUrl appends /v1 and drops query/hash", () => {
+    expect(normalizeGatewayBaseUrl("https://sui-xiang.com")).toBe("https://sui-xiang.com/v1");
+    expect(normalizeGatewayBaseUrl("https://sui-xiang.com/v1")).toBe("https://sui-xiang.com/v1");
+    expect(normalizeGatewayBaseUrl("https://sui-xiang.com/v1/")).toBe("https://sui-xiang.com/v1");
+    expect(normalizeGatewayBaseUrl("https://sui-xiang.com/api?k=1#frag")).toBe(
+      "https://sui-xiang.com/api/v1",
+    );
+    expect(normalizeGatewayBaseUrl("http://100.102.192.34:8317")).toBe(
+      "http://100.102.192.34:8317/v1",
+    );
+  });
+
+  it("normalizeGatewayBaseUrl returns null on parse failure or non-http protocol", () => {
+    expect(normalizeGatewayBaseUrl("")).toBeNull();
+    expect(normalizeGatewayBaseUrl("not a url")).toBeNull();
+    expect(normalizeGatewayBaseUrl("ftp://sui-xiang.com")).toBeNull();
+  });
+});
+
 describe("dpi console — buildConsoleItems", () => {
   it("builds items for all four kinds", () => {
     const repoPath = makeRepo();
@@ -288,6 +336,36 @@ describe("dpi console — addGatewayFlow", () => {
     const last = state.notifyCalls.at(-1)!;
     expect(last.message).toContain("Gateway my-gw added");
     expect(last.message).toContain("commit=false");
+  });
+
+  it("accepts a URL as the gateway id: derives id and defaults baseUrl to the normalized URL", async () => {
+    useTempHome();
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
+    const repoPath = makeRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    // id 字段粘贴 URL → 推导 id；baseUrl 留空 → 采用推导出的 https://…/v1
+    state.inputQueue = ["https://www.sui-xiang.test", "My Gateway", "", "sk-secret-abc"];
+    await addGatewayFlow(ctx);
+
+    const profiles = scanGatewayProfiles(repoPath);
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0].id).toBe("sui-xiang-test"); // www. 去掉 + 点转 `-` + 小写
+    expect(profiles[0].baseUrl).toBe("https://www.sui-xiang.test/v1"); // 自动补 /v1
+    expect(state.notifyCalls.some((n) => n.message.includes("Gateway sui-xiang-test added"))).toBe(true);
+  });
+
+  it("notifies with guidance when a pasted URL cannot be derived into an id", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://"];
+    await addGatewayFlow(ctx);
+    expect(
+      state.notifyCalls.some((n) => n.message.includes("could not derive an id from that URL")),
+    ).toBe(true);
+    expect(scanGatewayProfiles(repoPath)).toHaveLength(0);
   });
 
   it("leaves no credential or profile behind when the model scan fails", async () => {
@@ -690,6 +768,38 @@ describe("content-model console — gateways providers/models navigation", () =>
     const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
     const p2 = gateway.providers.find((p) => p.id === "p2")!;
     expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("provider add flow notifies URL guidance when the provider id looks like a URL", async () => {
+    useTempHome();
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://api.example.com"];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(
+      state.notifyCalls.some((n) =>
+        n.message.includes(
+          "Looks like a URL — providers live inside gateway ser7-cpa; to add an independent gateway use 'a' on the Gateways list instead",
+        ),
+      ),
+    ).toBe(true);
+    // 未写任何 profile（URL 误粘贴进 id 字段即中断）
+    expect(scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!.providers).toHaveLength(1);
+  });
+
+  it("provider add flow keeps the bare invalid-id error for non-URL ids", async () => {
+    useTempHome();
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["Bad Provider"];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message === "Invalid provider id: Bad Provider")).toBe(
+      true,
+    );
   });
 
   it("schema 2 provider add flow: baseUrl/apiKey written into the profile and committed+pushed", async () => {
