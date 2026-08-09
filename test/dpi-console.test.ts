@@ -288,14 +288,14 @@ describe("dpi console — addGatewayFlow", () => {
     expect(state.notifyCalls[0]?.message).toContain("No content repo bound");
   });
 
-  it("rejects an invalid gateway id", async () => {
+  it("rejects a non-URL baseUrl input", async () => {
     useTempHome();
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
     state.inputQueue = ["Bad ID"];
     await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
-    expect(state.notifyCalls.some((n) => n.message.includes("Invalid gateway id"))).toBe(true);
+    expect(state.notifyCalls.some((n) => n.message.includes("Invalid base URL"))).toBe(true);
   });
 
   it("requires baseUrl and API key", async () => {
@@ -303,10 +303,11 @@ describe("dpi console — addGatewayFlow", () => {
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["ok-gw", "label", "https://gw.example.com/v1", ""];
+    state.inputQueue = ["https://gw.example.com/v1", ""];
     await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
     expect(state.notifyCalls.some((n) => n.message === "baseUrl and API key are required")).toBe(true);
-    expect(readCredential("ok-gw")).toBeNull();
+    expect(readCredential("gw-example")).toBeNull();
+    expect(scanGatewayProfiles(repoPath)).toHaveLength(0);
   });
 
   it("happy path: key written into the schema 2 profile, no credential store", async () => {
@@ -318,19 +319,20 @@ describe("dpi console — addGatewayFlow", () => {
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["my-gw", "My Gateway", "https://gw.example.com/v1", "sk-secret-abc"];
+    // 极简表单：baseUrl → key；id 从 baseUrl 自动推导（label = id）
+    state.inputQueue = ["https://gw.example.com/v1", "sk-secret-abc"];
     const next = await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
 
     expect(next).toBe("reopen");
     // schema 2：key 直接写进 profile，不再落 credential store（私有仓库即安全边界）
-    expect(readCredential("my-gw")).toBeNull();
+    expect(readCredential("gw-example")).toBeNull();
     expect(
       state.notifyCalls.every((n) => !n.message.includes("sk-secret-abc")),
     ).toBe(true);
-    // profile 落库：schema 2 + apiKey + 扫描到的模型
+    // profile 落库：schema 2 + apiKey + 扫描到的模型；id 由 URL 推导
     const profiles = scanGatewayProfiles(repoPath);
     expect(profiles).toHaveLength(1);
-    expect(profiles[0].id).toBe("my-gw");
+    expect(profiles[0].id).toBe("gw-example");
     expect(profiles[0].schema).toBe(2);
     expect(profiles[0].apiKey).toBe("sk-secret-abc");
     expect(profiles[0].providers[0].models.map((m) => m.id)).toEqual([
@@ -339,18 +341,18 @@ describe("dpi console — addGatewayFlow", () => {
     ]);
     // 非 git 临时目录：commit 失败 → 失败提示里仍带上 id 与 commit=false
     const last = state.notifyCalls.at(-1)!;
-    expect(last.message).toContain("Gateway my-gw added");
+    expect(last.message).toContain("Gateway gw-example added");
     expect(last.message).toContain("commit=false");
   });
 
-  it("accepts a URL as the gateway id: derives id and defaults baseUrl to the normalized URL", async () => {
+  it("accepts a URL as the baseUrl: derives id and normalizes /v1", async () => {
     useTempHome();
     vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
-    // id 字段粘贴 URL → 推导 id；baseUrl 留空 → 采用推导出的 https://…/v1
-    state.inputQueue = ["https://www.sui-xiang.test", "My Gateway", "", "sk-secret-abc"];
+    // baseUrl 字段粘贴 URL → 推导 id；baseUrl 自动补 /v1
+    state.inputQueue = ["https://www.sui-xiang.test", "sk-secret-abc"];
     await addGatewayFlow(ctx);
 
     const profiles = scanGatewayProfiles(repoPath);
@@ -360,7 +362,7 @@ describe("dpi console — addGatewayFlow", () => {
     expect(state.notifyCalls.some((n) => n.message.includes("Gateway sui-xiang-test added"))).toBe(true);
   });
 
-  it("notifies with guidance when a pasted URL cannot be derived into an id", async () => {
+  it("notifies with URL guidance when the base URL is invalid", async () => {
     useTempHome();
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
@@ -368,7 +370,9 @@ describe("dpi console — addGatewayFlow", () => {
     state.inputQueue = ["https://"];
     await addGatewayFlow(ctx);
     expect(
-      state.notifyCalls.some((n) => n.message.includes("could not derive an id from that URL")),
+      state.notifyCalls.some(
+        (n) => n.message.includes("Invalid base URL") && n.message.includes("expected http(s)://host[/v1]"),
+      ),
     ).toBe(true);
     expect(scanGatewayProfiles(repoPath)).toHaveLength(0);
   });
@@ -379,11 +383,11 @@ describe("dpi console — addGatewayFlow", () => {
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["bad-gw", "Bad", "https://gw.example.com/v1", "sk-x"];
+    state.inputQueue = ["https://gw.example.com/v1", "sk-x"];
     const next = await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
 
     expect(next).toBe("reopen");
-    expect(readCredential("bad-gw")).toBeNull(); // 从未创建 credential
+    expect(readCredential("gw-example")).toBeNull(); // 从未创建 credential
     expect(scanGatewayProfiles(repoPath)).toHaveLength(0); // 无半成品 profile
     expect(state.notifyCalls.some((n) => n.message.startsWith("Model scan failed:"))).toBe(true);
   });
@@ -394,11 +398,12 @@ describe("dpi console — addGatewayFlow", () => {
     const repoPath = makeRepo();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
     const { ctx, state } = makeCtx();
-    // baseUrl 缺 /v1 路径 → buildGatewayProfile 校验失败
-    state.inputQueue = ["gw2", "gw2", "https://gw.example.com", "sk"];
+    // localhost 能通过 baseUrl 规范化与 id 推导，但 validBaseUrl 拒绝 → profile 校验失败
+    state.inputQueue = ["https://localhost", "sk"];
     await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
 
-    expect(readCredential("gw2")).toBeNull();
+    expect(readCredential("localhost")).toBeNull();
+    expect(scanGatewayProfiles(repoPath)).toHaveLength(0);
     expect(state.notifyCalls.some((n) => n.message.includes("Profile failed validation"))).toBe(true);
   });
 });
@@ -758,40 +763,42 @@ describe("content-model console — gateways providers/models navigation", () =>
     expect(state.notifyCalls.some((n) => n.message.includes("Unknown provider: nope"))).toBe(true);
   });
 
-  it("provider add flow: /models toggle → addProviderToGateway committed+pushed", async () => {
+  it("provider add flow: models imported wholesale → addProviderToGateway committed+pushed", async () => {
     useTempHome();
     vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
     vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }, { id: "m2" }] }));
     const work = await seedGitGateway();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
 
-    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
-    state.inputQueue = ["p2", "P2"]; // id → name → baseUrl(Enter) → apiKey(Enter)
+    const { ctx, state } = makeCtx();
+    // baseUrl(Enter=gateway) → apiKey(Enter=reuse) → 手动 id
+    state.inputQueue = ["", "", "p2"];
     state.selectQueue = ["openai-completions"]; // API 类型选择器
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
     const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
     const p2 = gateway.providers.find((p) => p.id === "p2")!;
+    // 全量导入，无勾选选择器
     expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 
-  it("provider add flow notifies URL guidance when the provider id looks like a URL", async () => {
+  it("provider add flow notifies URL guidance when the provider base URL is invalid", async () => {
     useTempHome();
     const work = await seedGitGateway();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["https://api.example.com"];
+    state.inputQueue = ["https://"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(
-      state.notifyCalls.some((n) =>
-        n.message.includes(
-          "Looks like a URL — providers live inside gateway ser7-cpa; to add an independent gateway use 'a' on the Gateways list instead",
-        ),
+      state.notifyCalls.some(
+        (n) =>
+          n.message.includes("Invalid provider base URL") &&
+          n.message.includes("expected http(s)://host[/v1]"),
       ),
     ).toBe(true);
-    // 未写任何 profile（URL 误粘贴进 id 字段即中断）
+    // 未写任何 profile（非法 URL 进 baseUrl 字段即中断）
     expect(scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!.providers).toHaveLength(1);
   });
 
@@ -800,7 +807,8 @@ describe("content-model console — gateways providers/models navigation", () =>
     const work = await seedGitGateway();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["Bad Provider"];
+    // baseUrl(Enter) → apiKey(Enter) → 手动 id
+    state.inputQueue = ["", "", "Bad Provider"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message === "Invalid provider id: Bad Provider")).toBe(
@@ -814,18 +822,18 @@ describe("content-model console — gateways providers/models navigation", () =>
     const work = await seedGitGateway(); // 初始为 schema 1（credentialRef）
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
 
-    // 输入含 provider 级 baseUrl/apiKey → schema 2 直写
-    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
-    state.inputQueue = ["p2", "P2", "https://upstream.example.com/v1", "sk-provider-secret"];
+    // 输入含 provider 级 baseUrl/apiKey → schema 2 直写（id 从 URL 推导）
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://upstream.example.com/v1", "sk-provider-secret"];
     state.selectQueue = ["openai-completions"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
-    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider upstream-example added"))).toBe(true);
     // key 不泄漏到 notify
     expect(state.notifyCalls.every((n) => !n.message.includes("sk-provider-secret"))).toBe(true);
     const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
     expect(gateway.schema).toBe(2); // 自动提升为 schema 2
-    const p2 = gateway.providers.find((p) => p.id === "p2")!;
+    const p2 = gateway.providers.find((p) => p.id === "upstream-example")!;
     expect(p2.apiKey).toBe("sk-provider-secret");
     expect(p2.baseUrl).toBe("https://upstream.example.com/v1");
     expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
@@ -834,10 +842,12 @@ describe("content-model console — gateways providers/models navigation", () =>
   it("provider add flow aborts when the API type picker is cancelled", async () => {
     useTempHome();
     vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
     const work = await seedGitGateway();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["p2", "P2"];
+    // baseUrl(Enter) → apiKey(Enter) → 手动 id；走到 API 选择器时取消
+    state.inputQueue = ["", "", "p2"];
     // selectQueue 为空 → ui.select 返回 undefined（取消）→ 流程中止
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
@@ -851,8 +861,9 @@ describe("content-model console — gateways providers/models navigation", () =>
     vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
     const work = await seedGitGateway();
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
-    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1"] }], { hasUI: false });
-    state.inputQueue = ["p2", "P2", "", "", "openai-completions"];
+    const { ctx, state } = makeCtx([], { hasUI: false });
+    // baseUrl(Enter) → apiKey(Enter) → 手动 id → API 输入框
+    state.inputQueue = ["", "", "p2", "openai-completions"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
@@ -868,7 +879,7 @@ describe("content-model console — gateways providers/models navigation", () =>
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
     // 复现用户误粘贴：https://sui-xiang.com 被输入进 API 字段
     const { ctx, state } = makeCtx([], { hasUI: false });
-    state.inputQueue = ["p2", "P2", "", "", "https://sui-xiang.com"];
+    state.inputQueue = ["", "", "p2", "https://sui-xiang.com"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(
