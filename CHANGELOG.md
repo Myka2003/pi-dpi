@@ -2,6 +2,11 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.39
+
+- Wire add-repo flow to the repo binder; multi-line SSH key round-trip in credential store.
+- Enter on a gateway now performs use; fix commit/push reporting, delete-repo ref, empty-list add.
+
 ## 0.8.38
 
 - Add unified `/dpi` console (gateways, repo, skills, extensions list with add/delete/status keys).
