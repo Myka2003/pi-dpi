@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.50
+
+- Models carry per-model thinkingLevelMap and compat from pi's official model catalog (deepseek-v4: high/max only, kimi-k3: no xhigh, thinkingFormat etc.); reasoning falls back to family rules when the catalog misses.
+
 ## 0.8.49
 
 - Minimal add forms: gateway/provider add asks only baseUrl + key (+ API picker); ids derived from URLs, /v1 auto-appended; models imported wholesale.
