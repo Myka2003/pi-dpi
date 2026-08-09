@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.43
+
+- Content-model `/dpi` console: Agents/Skills/Extensions/Gateways/Sessions/Machines; gateway provider/model management with commit+push.
+
 ## 0.8.42
 
 - Fall back to a dpi identity when git user.name/user.email are unset (gateway commits work on fresh machines).
