@@ -99,4 +99,28 @@ describe("gateway writer", () => {
     expect(result.error).toBeTruthy();
     expect(scanGatewayProfiles(work).some((p) => p.id === "apimart")).toBe(true);
   });
+
+  it("adds profiles to sparse-checkout when missing so writes still commit and push", async () => {
+    const { work } = tempRepo();
+    // 稀疏检出只含 agents/，profiles/ 不在其中 → git add 会被 pathspec 拒绝
+    execFileSync("git", ["-C", work, "sparse-checkout", "init", "--cone"]);
+    execFileSync("git", ["-C", work, "sparse-checkout", "set", "agents"]);
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+    const list = execFileSync("git", ["-C", work, "sparse-checkout", "list"], {
+      encoding: "utf-8",
+    });
+    expect(list).toContain("profiles");
+  });
 });

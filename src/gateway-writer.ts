@@ -46,11 +46,42 @@ export function writeGatewayProfile(repoPath: string, profile: GatewayProfile): 
   }
 }
 
+/**
+ * 确保稀疏检出包含 profiles/：非稀疏仓库（sparse-checkout list 报 "not sparse"）
+ * 或已含 profiles 时直接放行；稀疏仓库缺 profiles 时执行 sparse-checkout add profiles。
+ * 返回 false 仅表示稀疏仓库下 add profiles 失败。
+ */
+async function ensureGatewayDirsSparse(repoPath: string): Promise<boolean> {
+  const opts = { noAuth: true };
+  let list: string;
+  try {
+    ({ stdout: list } = await gitIn(repoPath, ["sparse-checkout", "list"], opts));
+  } catch {
+    // 非稀疏仓库：sparse-checkout list 报 "not sparse"，工作区完整，无需调整
+    return true;
+  }
+  // 空输出（旧版 git 对非稀疏仓库输出为空）或已含 profiles：无需调整
+  if (list.trim().length === 0 || list.includes("profiles")) return true;
+  try {
+    await gitIn(repoPath, ["sparse-checkout", "add", "profiles"], opts);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function commitPushGateway(
   repoPath: string,
   profileId: string,
   message: string,
 ): Promise<{ committed: boolean; pushed: boolean; error?: string }> {
+  if (!(await ensureGatewayDirsSparse(repoPath))) {
+    return {
+      committed: false,
+      pushed: false,
+      error: "failed to add profiles/ to sparse-checkout",
+    };
+  }
   const opts = gitAuthOpts(15000);
   try {
     const file = `profiles/gateways/${profileId}.json`;
