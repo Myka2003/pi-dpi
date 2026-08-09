@@ -1,0 +1,167 @@
+{
+  "runId": "498b8fcb",
+  "agent": "analysis.repo-migration-reviewer",
+  "task": "Final review of the accumulated dpi-console consolidation (origin/main..c0acf208).\n\nRead:\n- Report: /Users/mingkaichen/.pi/agent/git/github.com/oc101363-creator/pi-dpi-tmp-fix/.superpowers/sdd/2026-08-09-dpi-console/task-14-report.md\n- Review packages: review-27716dbc..db6baaa7.diff and review-db6baaa7..c0acf208.diff in the same directory.\n\nVerify (independently re-run):\n1. Full suite green (npm test), typecheck clean, version NOT bumped.\n2. src/dpi-console.ts minimal forms: gateway [baseUrl,key] with URL-derived id + /v1 normalization; provider [baseUrl,key,API select] with derived id, manual id only when reusing gateway baseUrl; wholesale model import (no toggle).\n3. src/gateway-catalog.ts: inferContextWindow deepseek-v4 → 1048576; inferModelApi gpt-5* → openai-responses; loadPiModelCatalog reads models-store.json and official values (contextWindow/maxTokens/reasoning/api) win over rules; per-path catalog cache.\n4. src/gateway-writer.ts push timeout 30s; gateway-profile.ts GatewayModel.api field + validation; gateway-projection.ts passes api.\n5. Tests updated to the new forms and faithfully preserve each old test's intent (no-credential-store, cleanup on scan failure, allowed-API list, schema2 baseUrl/apiKey, committed+pushed).\n\nDo not edit files. Return:\n### Spec Compliance\n### Issues\n#### Critical\n#### Important\n#### Minor\n### Assessment",
+  "exitCode": 0,
+  "processSignal": "SIGTERM",
+  "usage": {
+    "input": 55193,
+    "output": 16107,
+    "cacheRead": 606080,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 17
+  },
+  "model": "dpi-gateway-ser7-cpa-deepseek-cpa/deepseek-v4-flash",
+  "attemptedModels": [
+    "dpi-gateway-ser7-cpa-deepseek-cpa/deepseek-v4-flash"
+  ],
+  "modelAttempts": [
+    {
+      "model": "dpi-gateway-ser7-cpa-deepseek-cpa/deepseek-v4-flash",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 55193,
+        "output": 16107,
+        "cacheRead": 606080,
+        "cacheWrite": 0,
+        "cost": 0,
+        "turns": 17
+      }
+    }
+  ],
+  "durationMs": 150316,
+  "toolCount": 25,
+  "launchContractDigest": "417f344729a2ca6d9ba26391ed5b3ab2d23dda7035a7bd8ff36e71f304e3bdc9",
+  "acceptance": {
+    "status": "attested",
+    "evidenceStatus": "attested",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "attested",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Return concrete findings with file paths and severity when applicable",
+          "evidence": [
+            "review-findings",
+            "residual-risks"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "review-findings",
+        "residual-risks"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Return concrete findings with file paths and severity when applicable",
+        "evidence": [
+          "review-findings",
+          "residual-risks"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Concrete findings with paths and severity returned: Minor-1 stale doc comments (src/dpi-console.ts:11, :772-773), Minor-2 in-process catalog cache staleness (src/gateway-catalog.ts _piCatalog), Minor-3 rule comment mismatch vs real official value (src/gateway-catalog.ts deepseek-v4 comment, real store says 1000000), Minor-4 no duplicate-id guard in addGatewayFlow (src/dpi-console.ts), Minor-5 fixed /tmp test path (test/gateway-catalog.test.ts). No Critical/Important issues."
+        }
+      ],
+      "changedFiles": [
+        "package-lock.json",
+        "src/dpi-console.ts",
+        "src/gateway-catalog.ts",
+        "src/gateway-profile.ts",
+        "src/gateway-projection.ts",
+        "src/gateway-writer.ts",
+        "test/dpi-console.test.ts",
+        "test/gateway-catalog.test.ts"
+      ],
+      "testsAddedOrUpdated": [
+        "test/dpi-console.test.ts",
+        "test/gateway-catalog.test.ts"
+      ],
+      "commandsRun": [
+        {
+          "command": "npm test",
+          "result": "passed",
+          "summary": "27 files passed, 214 tests passed, exit 0"
+        },
+        {
+          "command": "npm run typecheck",
+          "result": "passed",
+          "summary": "tsc --noEmit clean, exit 0"
+        },
+        {
+          "command": "git diff --stat origin/main..HEAD && git status --porcelain",
+          "result": "passed",
+          "summary": "Range is exactly the 2 commits (27716dbc..c0acf208), 8 files / 258 insertions / 107 deletions; worktree clean except untracked .pi-subagents/"
+        },
+        {
+          "command": "node loader check against real ~/.pi/agent/models-store.json",
+          "result": "passed",
+          "summary": "Parser extracts 16 entries; official deepseek-v4-flash values (contextWindow 1000000, maxTokens 384000, reasoning true, api openai-completions) win over rules"
+        },
+        {
+          "command": "git show 27716dbc:test/dpi-console.test.ts title diff vs HEAD",
+          "result": "passed",
+          "summary": "59 titles both sides, 0 dropped, 5 renamed to track the new minimal forms"
+        }
+      ],
+      "validationOutput": [
+        "npm test: Test Files 27 passed (27), Tests 214 passed (214), Duration 5.36s",
+        "npm run typecheck: no output, exit 0",
+        "package.json version 0.8.48 unchanged across 27716dbc..HEAD; package-lock.json synced 0.8.37→0.8.48 to match",
+        "gateway-writer.ts:189 push timeoutMs: 30000",
+        "inferContextWindow deepseek-v4 -> 1048576 (rule), gpt-5* -> openai-responses; official values win when present",
+        "Real models-store.json at /Users/mingkaichen/.pi/agent/models-store.json exists and parses correctly"
+      ],
+      "residualRisks": [
+        "Catalog cache is per-path and never refreshes within a process: if models-store.json is missing at first load or pi refreshes it every 4h, the extension process keeps stale/empty catalog until restart (falls back to rules).",
+        "addGatewayFlow has no duplicate-id guard: distinct URLs can derive the same id (gw.example.com vs www.gw.example.com -> gw-example) and silently overwrite an existing profile; pre-existing behavior made more reachable by URL-derived ids.",
+        "Gateway id derivation in tests depends on TLD-strip rules (gw-example / sui-xiang-test / upstream-example); assertion values would change if the rule table is adjusted.",
+        "push timeout 30s (src change) is not directly asserted by any test.",
+        "deepseek-v4 rule value 1048576 differs from the real official 1000000; production uses the official value, the rule only matters when the store is absent."
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "Minimal gateway/provider add forms (URL-derived ids, /v1 normalization, wholesale model import), model context/api inference with pi official catalog priority, GatewayModel.api field + validation + projection, 30s push timeout, and test alignment preserving all 59 old test intents.",
+      "reviewFindings": [
+        "no blockers",
+        "minor: src/dpi-console.ts:11,772-773 - stale doc comments still describe toggle selection and old input order for the provider add flow",
+        "minor: src/gateway-catalog.ts - module-level per-path catalog cache never refreshes within a process; stale or empty if models-store.json appears later",
+        "minor: src/gateway-catalog.ts - deepseek-v4 rule comment claims official 1M (1048576) but real official store value is 1000000",
+        "minor: src/dpi-console.ts addGatewayFlow - no duplicate-id guard; URL-derived ids can collide and silently overwrite an existing profile (pre-existing, more reachable now)",
+        "minor: test/gateway-catalog.test.ts - fixed global /tmp/pi-models-store-test.json path instead of a unique temp path"
+      ],
+      "manualNotes": "Task approved. Independently verified all 5 acceptance areas including a live parse of the real ~/.pi/agent/models-store.json proving official-values-win-over-rules in production shape. The two commits db6baaa7 + c0acf208 are exactly the origin/main..HEAD range with a clean worktree. Only minor doc/hygiene items; none block acceptance."
+    }
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": true
+    }
+  },
+  "transcriptPath": "/Users/mingkaichen/.pi/agent/git/github.com/oc101363-creator/pi-dpi-tmp-fix/.pi-subagents/artifacts/498b8fcb_analysis.repo-migration-reviewer_0_transcript.jsonl",
+  "timestamp": 1786282989875
+}

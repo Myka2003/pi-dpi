@@ -2,6 +2,12 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.49
+
+- Minimal add forms: gateway/provider add asks only baseUrl + key (+ API picker); ids derived from URLs, /v1 auto-appended; models imported wholesale.
+- Model metadata from pi's official model catalog (~/.pi/agent/models-store.json): contextWindow/maxTokens/reasoning/api win over family rules; family rules as fallback (deepseek-v4 → 1M, gpt-5* → openai-responses).
+- Gateway commit scope limited to the target profile; push timeout 30s with fast failure.
+
 ## 0.8.48
 
 - Provider add form: base URL + key asked before API type; API type is a picker (no free-text URL mistakes).
