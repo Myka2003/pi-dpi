@@ -60,6 +60,8 @@ export interface VimListPickerOptions<T> {
   hint?: string;
   theme: ThemeLike;
   onResult(result: VimListResult<T>): void;
+  /** 宿主 TUI 的重绘钩子；每次键盘输入后调用。 */
+  onInput?: () => void;
 }
 
 /**
@@ -229,84 +231,88 @@ export class VimListPicker<T> implements Component {
   }
 
   handleInput(data: string): void {
-    const actions = this.opts.actions ?? [];
-    const action = actions.find((a) => data === a.key); // 动作键均为单字符，直接比较
-    if (action && this.mode === "nav") {
-      this.finish(action.id);
-      return;
-    }
+    try {
+      const actions = this.opts.actions ?? [];
+      const action = actions.find((a) => data === a.key); // 动作键均为单字符，直接比较
+      if (action && this.mode === "nav") {
+        this.finish(action.id);
+        return;
+      }
 
-    // 搜索模式：箭头导航仍作用于过滤后的列表；可打印字符继续编辑过滤词。
-    if (this.mode === "search") {
+      // 搜索模式：箭头导航仍作用于过滤后的列表；可打印字符继续编辑过滤词。
+      if (this.mode === "search") {
+        if (matchesKey(data, Key.down) || data === "j") return this.state.moveDown();
+        if (matchesKey(data, Key.up) || data === "k") return this.state.moveUp();
+        if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
+        if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
+        if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
+        if (matchesKey(data, Key.ctrl("u"))) return this.state.moveHalf(false);
+        if (data.length === 1 && data >= " " && data !== "\x7f") {
+          this.state.setFilter(this.state.filter() + data);
+          return;
+        }
+        if (matchesKey(data, Key.backspace)) {
+          this.state.setFilter(this.state.filter().slice(0, -1));
+          return;
+        }
+        if (matchesKey(data, Key.enter)) {
+          this.mode = "nav"; // 确认过滤（保留 filter）
+          return;
+        }
+        if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+          this.state.setFilter("");
+          this.mode = "nav";
+        }
+        return;
+      }
+
+      // 导航模式
       if (matchesKey(data, Key.down) || data === "j") return this.state.moveDown();
       if (matchesKey(data, Key.up) || data === "k") return this.state.moveUp();
       if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
       if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
       if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
       if (matchesKey(data, Key.ctrl("u"))) return this.state.moveHalf(false);
-      if (data.length === 1 && data >= " " && data !== "\x7f") {
-        this.state.setFilter(this.state.filter() + data);
+      if (matchesKey(data, Key.ctrl("f"))) return this.state.movePage(true);
+      if (matchesKey(data, Key.ctrl("b"))) return this.state.movePage(false);
+      if (data === "g") {
+        if (this.lastKey === "g") {
+          this.state.jump(true);
+          this.lastKey = "";
+        } else {
+          this.lastKey = "g";
+        }
         return;
       }
-      if (matchesKey(data, Key.backspace)) {
-        this.state.setFilter(this.state.filter().slice(0, -1));
+      this.lastKey = "";
+      if (data === "G") return this.state.jump(false);
+      if (data === "/") {
+        this.mode = "search";
         return;
       }
       if (matchesKey(data, Key.enter)) {
-        this.mode = "nav"; // 确认过滤（保留 filter）
+        if (this.opts.mode === "select") {
+          this.finish("pick");
+        } else {
+          this.state.toggleCurrent(); // Enter 也切换（vim 空格/回车语义）
+        }
         return;
       }
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-        this.state.setFilter("");
-        this.mode = "nav";
+      // 空格：toggle 模式切换勾选；select 模式翻页（不能用前置分支拦截，
+      // 否则 toggle 永远到不了这里——之前把空格并进 pageDown 分支导致的 bug）
+      if (data === " ") {
+        if (this.opts.mode === "toggle") {
+          this.state.toggleCurrent();
+        } else {
+          this.state.movePage(true);
+        }
+        return;
       }
-      return;
-    }
-
-    // 导航模式
-    if (matchesKey(data, Key.down) || data === "j") return this.state.moveDown();
-    if (matchesKey(data, Key.up) || data === "k") return this.state.moveUp();
-    if (matchesKey(data, Key.pageDown)) return this.state.movePage(true);
-    if (matchesKey(data, Key.pageUp)) return this.state.movePage(false);
-    if (matchesKey(data, Key.ctrl("d"))) return this.state.moveHalf(true);
-    if (matchesKey(data, Key.ctrl("u"))) return this.state.moveHalf(false);
-    if (matchesKey(data, Key.ctrl("f"))) return this.state.movePage(true);
-    if (matchesKey(data, Key.ctrl("b"))) return this.state.movePage(false);
-    if (data === "g") {
-      if (this.lastKey === "g") {
-        this.state.jump(true);
-        this.lastKey = "";
-      } else {
-        this.lastKey = "g";
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
+        this.finish("cancel");
       }
-      return;
-    }
-    this.lastKey = "";
-    if (data === "G") return this.state.jump(false);
-    if (data === "/") {
-      this.mode = "search";
-      return;
-    }
-    if (matchesKey(data, Key.enter)) {
-      if (this.opts.mode === "select") {
-        this.finish("pick");
-      } else {
-        this.state.toggleCurrent(); // Enter 也切换（vim 空格/回车语义）
-      }
-      return;
-    }
-    // 空格：toggle 模式切换勾选；select 模式翻页（不能用前置分支拦截，
-    // 否则 toggle 永远到不了这里——之前把空格并进 pageDown 分支导致的 bug）
-    if (data === " ") {
-      if (this.opts.mode === "toggle") {
-        this.state.toggleCurrent();
-      } else {
-        this.state.movePage(true);
-      }
-      return;
-    }
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
-      this.finish("cancel");
+    } finally {
+      this.opts.onInput?.();
     }
   }
 
@@ -362,14 +368,15 @@ export class VimListPicker<T> implements Component {
 /** 打开 vim 选择器，返回结果；TUI 不可用时（RPC/print）返回 undefined */
 export function showVimListPicker<T>(
   ctx: ExtensionCommandContext,
-  opts: Omit<VimListPickerOptions<T>, "theme" | "onResult">,
+  opts: Omit<VimListPickerOptions<T>, "theme" | "onResult" | "onInput">,
 ): Promise<VimListResult<T> | undefined> {
   return ctx.ui.custom<VimListResult<T>>(
-    (_tui, theme, _keybindings, done) =>
+    (tui, theme, _keybindings, done) =>
       new VimListPicker<T>({
         ...opts,
         theme: theme as ThemeLike,
         onResult: (r) => done(r),
+        onInput: () => tui?.requestRender?.(),
       }),
   );
 }

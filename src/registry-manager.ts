@@ -194,8 +194,17 @@ export async function runRegistryManager(
       }
       continue;
     }
-    // cancel / 完成：写回勾选集（无变化则不写）
-    const next = res.checked ?? declared;
+    // cancel / 完成：仅当前内容注册表里的勾选项可变；保留 manifest 中
+    // 外部包/内建声明的名字，避免管理内容扩展时意外卸载它们。
+    const selected = new Set(res.checked ?? declared);
+    const registryNames = new Set(registry.map((entry) => entry.name));
+    const declaredNames = new Set(declared);
+    const next = [
+      ...declared.filter((name) => !registryNames.has(name) || selected.has(name)),
+      ...registry
+        .filter((entry) => selected.has(entry.name) && !declaredNames.has(entry.name))
+        .map((entry) => entry.name),
+    ];
     const same =
       next.length === declared.length && [...next].sort().join("\n") === [...declared].sort().join("\n");
     if (!same) {

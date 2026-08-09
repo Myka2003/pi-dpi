@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { VimListPicker, VimListState, type VimListItem } from "../src/vim-list-picker.ts";
+import { describe, expect, it, vi } from "vitest";
+import {
+  showVimListPicker,
+  VimListPicker,
+  VimListState,
+  type VimListItem,
+} from "../src/vim-list-picker.ts";
 
 const items = Array.from({ length: 55 }, (_, i) => ({
   id: `i${i}`,
@@ -123,5 +128,46 @@ describe("VimListPicker 搜索导航", () => {
     picker.handleInput("enter");
 
     expect(result).toMatchObject({ action: "pick", item: { id: "c" } });
+  });
+});
+
+describe("showVimListPicker", () => {
+  it("requests a TUI redraw after navigating the list", async () => {
+    const requestRender = vi.fn();
+    let component: { handleInput?(data: string): void } | undefined;
+    let finish!: (result: unknown) => void;
+    const result = new Promise<unknown>((resolve) => {
+      finish = resolve;
+    });
+    const ctx = {
+      ui: {
+        custom: (
+          factory: (
+            tui: { requestRender(): void },
+            theme: { fg(_color: string, text: string): string },
+            keybindings: unknown,
+            done: (value: unknown) => void,
+          ) => { handleInput?(data: string): void },
+        ) => {
+          component = factory({ requestRender }, { fg: (_color, text) => text }, undefined, finish);
+          return result;
+        },
+      },
+    };
+
+    const pending = showVimListPicker(ctx as never, {
+      title: "Extensions",
+      items: [
+        { id: "one", label: "one", data: "one" },
+        { id: "two", label: "two", data: "two" },
+      ],
+      mode: "select",
+    });
+
+    component?.handleInput?.("j");
+
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    component?.handleInput?.("escape");
+    await expect(pending).resolves.toMatchObject({ action: "cancel" });
   });
 });
