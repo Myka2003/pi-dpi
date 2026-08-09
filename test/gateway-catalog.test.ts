@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchGatewayModels, inferReasoning } from "../src/gateway-catalog.ts";
+import { fetchGatewayModels, inferReasoning, STANDARD_THINKING_LEVEL_MAP } from "../src/gateway-catalog.ts";
 
 describe("gateway catalog", () => {
   it("imports flat data[] as models without grouping", async () => {
@@ -91,22 +91,16 @@ describe("official catalog reasoning priority", () => {
   });
 });
 
-describe("official thinkingLevelMap and compat passthrough", () => {
-  it("carries thinkingLevelMap and compat from the pi catalog", async () => {
-    const storePath = "/tmp/pi-models-store-test3.json";
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(storePath, JSON.stringify({
-      deepseek: { models: [{
-        id: "deepseek-v4-flash",
-        thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
-        compat: { supportsStore: false, thinkingFormat: "deepseek" },
-      }] },
-    }));
+describe("standard thinking level map", () => {
+  it("every model gets the uniform low/medium/high/max map (no per-model fine-tuning)", async () => {
     const models = await fetchGatewayModels("https://api.example.com/v1", "sk-x", {
-      catalogStorePath: storePath,
-      fetchImpl: async () => new Response(JSON.stringify({ data: [{ id: "deepseek-v4-flash" }] }), { status: 200 }),
+      fetchImpl: async () => new Response(JSON.stringify({ data: [
+        { id: "deepseek-v4-flash" }, { id: "babbage-002" },
+      ] }), { status: 200 }),
     } as never);
-    expect(models[0].thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null, high: "high", max: "max" });
-    expect(models[0].compat).toEqual({ supportsStore: false, thinkingFormat: "deepseek" });
+    for (const m of models) {
+      expect(m.thinkingLevelMap).toEqual(STANDARD_THINKING_LEVEL_MAP);
+      expect(m.compat).toBeUndefined();
+    }
   });
 });
