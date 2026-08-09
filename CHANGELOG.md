@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.44
+
+- Gateway commits survive non-fast-forward pushes (pull --rebase --autostash retry) on shared repos.
+
 ## 0.8.43
 
 - Content-model `/dpi` console: Agents/Skills/Extensions/Gateways/Sessions/Machines; gateway provider/model management with commit+push.
