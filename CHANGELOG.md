@@ -2,6 +2,11 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.40
+
+- Restructure `/dpi` console into three-level navigation: repo list → Skills/Extensions/Gateways → items.
+- Fix Esc navigation (category returns to top; per-level hints).
+
 ## 0.8.39
 
 - Wire add-repo flow to the repo binder; multi-line SSH key round-trip in credential store.
