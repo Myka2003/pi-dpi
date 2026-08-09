@@ -70,6 +70,28 @@ export async function ensureGatewayDirsSparse(repoPath: string): Promise<boolean
   }
 }
 
+/** 提交身份兜底：机器未配置 user.name/user.email 时用 dpi 默认身份，
+ * 否则返回空数组尊重仓库既有配置。返回可直接拼入 commit 命令的 -c 参数。 */
+async function commitIdentityArgs(repoPath: string): Promise<string[]> {
+  const opts = { noAuth: true };
+  let name = "";
+  let email = "";
+  try {
+    ({ stdout: name } = await gitIn(repoPath, ["config", "user.name"], opts));
+  } catch {
+    // 未配置 user.name：走默认身份
+  }
+  try {
+    ({ stdout: email } = await gitIn(repoPath, ["config", "user.email"], opts));
+  } catch {
+    // 未配置 user.email：走默认身份
+  }
+  const args: string[] = [];
+  if (!name.trim()) args.push("-c", "user.name=dpi");
+  if (!email.trim()) args.push("-c", "user.email=dpi@users.noreply.github.com");
+  return args;
+}
+
 export async function commitPushGateway(
   repoPath: string,
   profileId: string,
@@ -88,7 +110,8 @@ export async function commitPushGateway(
     await gitIn(repoPath, ["add", file], opts);
     const { stdout } = await gitIn(repoPath, ["status", "--porcelain", "--", file], opts);
     if (stdout.trim().length === 0) return { committed: false, pushed: false };
-    await gitIn(repoPath, ["commit", "-m", message], opts);
+    const identityArgs = await commitIdentityArgs(repoPath);
+    await gitIn(repoPath, [...identityArgs, "commit", "-m", message], opts);
   } catch (error) {
     return {
       committed: false,

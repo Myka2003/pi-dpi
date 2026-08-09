@@ -20,10 +20,48 @@ function tempRepo(): { work: string; bare: string } {
   execFileSync("git", ["init", "-b", "main"], { cwd: work });
   execFileSync("git", ["init", "--bare", "-b", "main", bare]);
   execFileSync("git", ["remote", "add", "origin", bare], { cwd: work });
-  execFileSync("git", ["-C", work, "commit", "--allow-empty", "-m", "init"]);
+  // init 提交带显式身份：不依赖机器 git config，保证无身份环境下测试可复现
+  execFileSync(
+    "git",
+    [
+      "-C",
+      work,
+      "-c",
+      "user.name=dpi",
+      "-c",
+      "user.email=dpi@users.noreply.github.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "init",
+    ],
+  );
   execFileSync("git", ["-C", work, "push", "-u", "origin", "main"]);
   execFileSync("mkdir", ["-p", join(work, "profiles", "gateways")]);
   return { work, bare };
+}
+
+/** 最近一次提交的作者（%an <%ae>） */
+function commitAuthor(repoPath: string): string {
+  return execFileSync("git", ["-C", repoPath, "log", "-1", "--format=%an <%ae>"], {
+    encoding: "utf-8",
+  }).trim();
+}
+
+/** 临时屏蔽全局/系统 git 身份，让「未配置身份」用例在任意机器上可复现 */
+async function withoutGlobalIdentity<T>(fn: () => Promise<T>): Promise<T> {
+  const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+  const prevSystem = process.env.GIT_CONFIG_SYSTEM;
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_SYSTEM = "/dev/null";
+  try {
+    return await fn();
+  } finally {
+    if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+    if (prevSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+    else process.env.GIT_CONFIG_SYSTEM = prevSystem;
+  }
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -123,6 +161,46 @@ describe("gateway writer", () => {
       encoding: "utf-8",
     });
     expect(list).toContain("profiles");
+  });
+
+  it("commits with the dpi fallback identity when none is configured", async () => {
+    await withoutGlobalIdentity(async () => {
+      const { work } = tempRepo();
+      const profile = buildGatewayProfile({
+        id: "apimart",
+        label: "APIMart",
+        baseUrl: "https://api.apimart.ai/v1",
+        credentialRef: "apimart-key",
+        providerId: "apimart",
+        api: "openai-completions",
+        models: [{ id: "gpt-5" }],
+      })!;
+      expect(writeGatewayProfile(work, profile)).toBe(true);
+      const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+      expect(result.committed).toBe(true);
+      expect(result.pushed).toBe(true);
+      expect(commitAuthor(work)).toBe("dpi <dpi@users.noreply.github.com>");
+    });
+  });
+
+  it("keeps the repo's configured identity for commits", async () => {
+    const { work } = tempRepo();
+    execFileSync("git", ["-C", work, "config", "user.name", "Test User"]);
+    execFileSync("git", ["-C", work, "config", "user.email", "test@example.com"]);
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+    expect(commitAuthor(work)).toBe("Test User <test@example.com>");
   });
 
   it("deletes a tracked profile on a sparse-missing-profiles repo without resurrecting it", async () => {
