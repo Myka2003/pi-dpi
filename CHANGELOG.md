@@ -2,6 +2,11 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.52
+
+- Fix DPI custom picker redraws after every key input, so /dpi and /dpi-extensions no longer appear frozen or retain the editor focus.
+- Preserve declared package/built-in extensions that are absent from the content repository registry; exiting the extension manager unchanged no longer removes gateway-manager or triggers a reload.
+
 ## 0.8.51
 
 - Uniform thinking levels for gateway models: low/medium/high/max on every model (no per-model fine-tuning); official per-model thinkingLevelMap/compat passthrough removed (relay-station models don't expose them).
