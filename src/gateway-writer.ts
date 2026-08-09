@@ -51,7 +51,7 @@ export function writeGatewayProfile(repoPath: string, profile: GatewayProfile): 
  * 或已含 profiles 时直接放行；稀疏仓库缺 profiles 时执行 sparse-checkout add profiles。
  * 返回 false 仅表示稀疏仓库下 add profiles 失败。
  */
-async function ensureGatewayDirsSparse(repoPath: string): Promise<boolean> {
+export async function ensureGatewayDirsSparse(repoPath: string): Promise<boolean> {
   const opts = { noAuth: true };
   let list: string;
   try {

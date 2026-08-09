@@ -7,6 +7,7 @@ import {
   buildGatewayProfile,
   commitPushGateway,
   deleteGatewayProfile,
+  ensureGatewayDirsSparse,
   writeGatewayProfile,
 } from "../src/gateway-writer.ts";
 import { parseGatewayProfile, scanGatewayProfiles } from "../src/gateway-profile.ts";
@@ -122,5 +123,51 @@ describe("gateway writer", () => {
       encoding: "utf-8",
     });
     expect(list).toContain("profiles");
+  });
+
+  it("deletes a tracked profile on a sparse-missing-profiles repo without resurrecting it", async () => {
+    const { work } = tempRepo();
+    // 全量工作区提交 profile，使其进入 index 与远端
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const added = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    expect(added.committed).toBe(true);
+    expect(added.pushed).toBe(true);
+    expect(existsSync(join(work, "profiles", "gateways", "apimart.json"))).toBe(true);
+
+    // 收紧稀疏集为 agents only → 文件从工作区剪除但仍被 index 跟踪
+    execFileSync("git", ["-C", work, "sparse-checkout", "init", "--cone"]);
+    execFileSync("git", ["-C", work, "sparse-checkout", "set", "agents"]);
+    expect(existsSync(join(work, "profiles", "gateways", "apimart.json"))).toBe(false);
+    expect(
+      execFileSync("git", ["-C", work, "ls-files", "profiles/gateways/apimart.json"], {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe("profiles/gateways/apimart.json");
+
+    // 删除流程：先确保 profiles 在稀疏集内，再删文件，最后提交推送
+    expect(await ensureGatewayDirsSparse(work)).toBe(true);
+    expect(deleteGatewayProfile(work, "apimart")).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "chore: remove gateway apimart");
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+
+    // 文件保持删除（不被稀疏集补回），且存在删除提交
+    expect(existsSync(join(work, "profiles", "gateways", "apimart.json"))).toBe(false);
+    expect(scanGatewayProfiles(work).some((p) => p.id === "apimart")).toBe(false);
+    const removalLog = execFileSync(
+      "git",
+      ["-C", work, "log", "--diff-filter=D", "--oneline", "--", "profiles/gateways/apimart.json"],
+      { encoding: "utf-8" },
+    );
+    expect(removalLog).toContain("chore: remove gateway apimart");
   });
 });

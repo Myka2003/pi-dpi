@@ -40,6 +40,7 @@ import {
   buildGatewayProfile,
   commitPushGateway,
   deleteGatewayProfile,
+  ensureGatewayDirsSparse,
   writeGatewayProfile,
 } from "./gateway-writer.ts";
 import { runRegistryManager } from "./registry-manager.ts";
@@ -248,8 +249,12 @@ export async function handleConsoleResult(
 
   if (result.action === "delete" && item.kind === "gateway") {
     const cfg = loadConfig();
-    if (cfg.repoPath && deleteGatewayProfile(cfg.repoPath, item.id)) {
-      await commitPushGateway(cfg.repoPath, item.id, `chore: remove gateway ${item.id}`).catch(() => {});
+    // 稀疏检出必须先含 profiles/ 再删文件：否则 commitPushGateway 内部的稀疏兑底
+    // 会把已删文件从 index 恢复回工作区，删除永远不会被提交（文件“复活”）。
+    if (cfg.repoPath && (await ensureGatewayDirsSparse(cfg.repoPath))) {
+      if (deleteGatewayProfile(cfg.repoPath, item.id)) {
+        await commitPushGateway(cfg.repoPath, item.id, `chore: remove gateway ${item.id}`).catch(() => {});
+      }
     }
     return "reopen";
   }
