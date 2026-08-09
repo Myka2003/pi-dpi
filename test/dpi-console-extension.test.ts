@@ -73,12 +73,16 @@ function mockPi(): PiMock {
   return { pi: pi as unknown as ExtensionAPI, handlers, registerProvider: pi.registerProvider };
 }
 
-/** mock ctx：custom 按调用顺序返回队列里的 pick 结果（模拟三层导航的逐步选择） */
+/** mock ctx：custom 按调用顺序返回队列里的 pick 结果（模拟三层导航的逐步选择）；
+ * 同时用 builder 构造出 picker 组件以捕获其标题（opts 私有字段运行时可达），
+ * 供断言状态机 Esc 后确实切回预期层级。 */
 function makeCtx(results: VimListResult<ConsoleNavData>[]): {
   ctx: never;
   notifyCalls: { message: string; type?: string }[];
+  titles: string[];
 } {
   const notifyCalls: { message: string; type?: string }[] = [];
+  const titles: string[] = [];
   const queue = [...results];
   const ctx = {
     hasUI: true,
@@ -89,10 +93,21 @@ function makeCtx(results: VimListResult<ConsoleNavData>[]): {
       },
       confirm: async () => true,
       select: async () => "",
-      custom: async () => queue.shift(),
+      custom: async (
+        build: (tui: unknown, theme: unknown, kb: unknown, done: (r: unknown) => void) => unknown,
+      ) => {
+        const component = build(
+          null,
+          { fg: (_color: string, text: string) => text },
+          null,
+          () => {},
+        );
+        titles.push((component as { opts?: { title?: string } }).opts?.title ?? "");
+        return queue.shift();
+      },
     },
   };
-  return { ctx: ctx as never, notifyCalls };
+  return { ctx: ctx as never, notifyCalls, titles };
 }
 
 function topRepoPick(): VimListResult<ConsoleNavData> {
@@ -175,6 +190,22 @@ describe("dpi console extension — three-level navigation", () => {
     const { ctx, notifyCalls } = makeCtx([{ action: "cancel" }]);
     await handler("", ctx);
     expect(notifyCalls).toHaveLength(0);
+  });
+
+  it("Esc at the category level returns to top; a second Esc at top exits (never stuck)", async () => {
+    useTempHome();
+    repo = mkdtempSync(join(tmpdir(), "dpi-console-ext-"));
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: repo });
+    const { pi, handlers } = mockPi();
+    dpiConsole(pi);
+    const handler = handlers.get("dpi")!;
+
+    // top 选仓库 → category 按 Esc → top 再按 Esc 退出。捕获每次 custom 的
+    // 列表标题证明层级迁移：category 的 Esc 必须回 top（旧行为卡在 category，
+    // 下降后永远无法用 Esc 退出控制台）。
+    const { ctx, titles } = makeCtx([topRepoPick(), { action: "cancel" }, { action: "cancel" }]);
+    await handler("", ctx);
+    expect(titles).toEqual(["dpi console", "dpi — category", "dpi console"]);
   });
 
   it("category Skills pick enters the skills registry manager (toggle writes back the declaration)", async () => {

@@ -7,7 +7,8 @@
  *   条目（pick / a 走 addRepoFlow 绑定）；s 走 inspectRepo 状态摘要。
  * - category：Skills / Extensions 直接进入 runRegistryManager（其 toggle
  *   列表即第三层）；Gateways 进入 gateway 条目列表（items 层，复用
- *   handleConsoleResult 的 add/delete/status 逻辑；pick 复用 useGateway）。
+ *   handleConsoleResult 的 add/delete/status 逻辑；pick 复用 useGateway）；
+ *   Esc 返回 top（顶层再按 Esc 退出控制台）。
  * - items：gateway 条目（add/delete/status/pick），Esc 返回 category。
  *
  * 旧的扁平构建（buildConsoleItems / handleConsoleResult）保留不动，供既有
@@ -439,12 +440,12 @@ export async function handleTopResult(
 }
 
 /** category 层结果路由：Skills / Extensions → runRegistryManager（其 toggle 列表
- * 即第三层）→ "back"（回 category）；Gateways → "enter"（进 items 层）；
- * cancel → "back"。 */
+ * 即第三层）→ "back"（回 top）；Gateways → "enter"（进 items 层）；
+ * cancel（Esc）→ "back"（回 top，顶层再按 Esc 退出控制台）。 */
 export async function handleCategoryResult(
   ctx: ExtensionCommandContext,
   result: VimListResult<ConsoleNavData>,
-): Promise<"enter" | "back" | "done"> {
+): Promise<"enter" | "back"> {
   if (!result || result.action === "cancel") return "back";
   if (result.action === "pick" && result.item) {
     const id = result.item.data.id;
@@ -562,12 +563,19 @@ export async function runConsole(
               { key: "s", id: "status", hint: "status" },
             ]
           : undefined;
+    // 提示语按层级给准确含义：top 的 Esc 退出，category/items 的 Esc 逐级回退
+    const hint =
+      level === "top"
+        ? "j/k nav · / filter · Enter select · Esc quit"
+        : level === "category"
+          ? "j/k nav · / filter · Enter select · Esc back to top"
+          : "j/k nav · / filter · Enter select · Esc back to category";
     const result = await showVimListPicker<ConsoleNavData>(ctx, {
       title,
       items,
       mode: "select",
       actions,
-      hint: "j/k nav · / filter · Enter select · Esc back/quit",
+      hint,
     });
     if (!result) return; // TUI 不可用/异常
 
@@ -579,12 +587,13 @@ export async function runConsole(
     }
     if (level === "category") {
       const next = await handleCategoryResult(ctx, result);
-      if (next === "done") return;
       if (next === "enter") {
         level = "items";
         currentKind = "gateway";
+      } else {
+        level = "top"; // "back"：Esc 或 registry manager 完成 → 回 top（再按 Esc 退出）
       }
-      continue; // "back" 留在 category 层
+      continue;
     }
     const next = await handleItemResult(ctx, result, options);
     if (next === "back") level = "category";
