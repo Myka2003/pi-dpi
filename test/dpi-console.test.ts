@@ -11,12 +11,22 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveConfig } from "../src/config.ts";
 import { readCredential, writeCredential } from "../src/credential-store.ts";
-import { buildConsoleItems, handleConsoleResult } from "../src/dpi-console.ts";
+import {
+  buildConsoleItems,
+  buildTopItems,
+  buildCategoryItems,
+  buildItemList,
+  handleConsoleResult,
+  handleTopResult,
+  handleCategoryResult,
+  handleItemResult,
+} from "../src/dpi-console.ts";
 import { scanGatewayProfiles } from "../src/gateway-profile.ts";
 import { buildGatewayProfile } from "../src/gateway-writer.ts";
 import { bindRepoWithKey } from "../src/repo-binder.ts";
-import type { ConsoleItemData } from "../src/dpi-console.ts";
+import type { ConsoleItemData, ConsoleNavData } from "../src/dpi-console.ts";
 import type { VimListItem, VimListResult } from "../src/vim-list-picker.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // addRepoFlow 委托给 bindRepoWithKey（写 key/config + clone）；mock 掉真实克隆，
 // 保持测试离线确定性（bindRepoWithKey 自身的落地逻辑在 repo-binder.test.ts 覆盖）
@@ -366,5 +376,156 @@ describe("dpi console — handleConsoleResult routing", () => {
     const { ctx } = makeCtx();
     const next = await handleConsoleResult(ctx, { action: "pick" });
     expect(next).toBe("done");
+  });
+});
+
+describe("three-level navigation", () => {
+  it("top level lists repo + add entry, both at level top", () => {
+    const items = buildTopItems({
+      repoUrl: "https://github.com/Myka2003/Agent.git",
+      repoPath: "/tmp/x",
+    });
+    expect(items.length).toBeGreaterThanOrEqual(1);
+    expect(items[0].data.level).toBe("top");
+    expect(items[0].data.kind).toBe("repo");
+    expect(items.some((i) => i.data.id === "add" && i.data.kind === "repo")).toBe(true);
+  });
+
+  it("top level has only the add entry when no repo is bound", () => {
+    const items = buildTopItems({ repoUrl: "", repoPath: "/tmp/x" });
+    expect(items).toHaveLength(1);
+    expect(items[0].data.id).toBe("add");
+  });
+
+  it("category level lists Skills/Extensions/Gateways", () => {
+    const items = buildCategoryItems();
+    const kinds = items.map((i) => i.data.id);
+    expect(kinds).toContain("Skills");
+    expect(kinds).toContain("Extensions");
+    expect(kinds).toContain("Gateways");
+    for (const item of items) {
+      expect(item.data.level).toBe("category");
+      expect(item.data.kind).toBe("category");
+    }
+  });
+
+  it("handleTopResult pick on the bound repo enters category; Esc returns done", async () => {
+    const { ctx } = makeCtx();
+    const enter = await handleTopResult(ctx, {
+      action: "pick",
+      item: { id: "repo:0", label: "r", data: { level: "top", kind: "repo", id: "0", meta: "" } },
+    });
+    expect(enter).toBe("enter");
+    const esc = await handleTopResult(ctx, { action: "cancel" });
+    expect(esc).toBe("done");
+  });
+
+  it("handleTopResult pick on the add entry runs addRepoFlow and reopens", async () => {
+    useTempHome();
+    vi.mocked(bindRepoWithKey).mockResolvedValue({ ok: true });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://github.com/Myka2003/Agent.git", "key-material"];
+    const next = await handleTopResult(ctx, {
+      action: "pick",
+      item: { id: "repo:add", label: "+ Add repo", data: { level: "top", kind: "repo", id: "add", meta: "" } },
+    });
+    expect(next).toBe("reopen");
+    expect(bindRepoWithKey).toHaveBeenCalledTimes(1);
+    expect(state.notifyCalls.at(-1)?.message).toContain("Repo bound");
+  });
+
+  it("handleTopResult status reports repo health via inspectRepo", async () => {
+    useTempHome();
+    const { ctx, state } = makeCtx();
+    const next = await handleTopResult(ctx, { action: "status" });
+    expect(next).toBe("reopen");
+    const msg = state.notifyCalls.at(-1)?.message ?? "";
+    expect(msg).toContain("repoUrl missing");
+  });
+
+  it("handleCategoryResult Skills/Extensions run the registry manager; Gateways enters items", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx } = makeCtx();
+    const skills = await handleCategoryResult(ctx, {
+      action: "pick",
+      item: { id: "Skills", label: "Skills", data: { level: "category", kind: "category", id: "Skills", meta: "" } },
+    });
+    expect(skills).toBe("back");
+    const ext = await handleCategoryResult(ctx, {
+      action: "pick",
+      item: { id: "Extensions", label: "Extensions", data: { level: "category", kind: "category", id: "Extensions", meta: "" } },
+    });
+    expect(ext).toBe("back");
+    const gateways = await handleCategoryResult(ctx, {
+      action: "pick",
+      item: { id: "Gateways", label: "Gateways", data: { level: "category", kind: "category", id: "Gateways", meta: "" } },
+    });
+    expect(gateways).toBe("enter");
+    const esc = await handleCategoryResult(ctx, { action: "cancel" });
+    expect(esc).toBe("back");
+  });
+
+  it("buildItemList lists gateway entries at the items level", () => {
+    const repoPath = makeRepo();
+    seedRepo();
+    const items = buildItemList({ repoPath, currentGateway: "ser7-cpa" }, "gateway");
+    const gateway = items.find((i) => i.data.id === "ser7-cpa");
+    expect(gateway).toBeDefined();
+    expect(gateway!.data.level).toBe("items");
+    expect(gateway!.data.kind).toBe("gateway");
+    expect(gateway!.meta).toContain("selected");
+  });
+
+  it("handleItemResult gateway pick uses useGateway (health failure in temp HOME)", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    seedRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const stubPi = { registerProvider: vi.fn(), unregisterProvider: vi.fn() } as unknown as ExtensionAPI;
+    const next = await handleItemResult(
+      ctx,
+      {
+        action: "pick",
+        item: {
+          id: "gateway:ser7-cpa",
+          label: "[gateway] ser7-cpa",
+          data: { level: "items", kind: "gateway", id: "ser7-cpa", meta: "" },
+        },
+      },
+      { pi: stubPi },
+    );
+    expect(next).toBe("back");
+    expect(state.notifyCalls.some((n) => n.message.includes("credential: missing"))).toBe(true);
+    expect(state.notifyCalls.some((n) => n.message.includes("wire to applyProfile"))).toBe(false);
+  });
+
+  it("handleItemResult pick on a skill item notifies name + description", async () => {
+    const { ctx, state } = makeCtx();
+    const next = await handleItemResult(
+      ctx,
+      {
+        action: "pick",
+        item: {
+          id: "skill:memory",
+          label: "[skill] memory",
+          data: { level: "items", kind: "skill", id: "memory", meta: "long term memory" },
+        },
+      },
+      {},
+    );
+    expect(next).toBe("back");
+    const msg = state.notifyCalls.at(-1)?.message ?? "";
+    expect(msg).toContain("memory");
+    expect(msg).toContain("long term memory");
+  });
+
+  it("handleItemResult cancel returns to category", async () => {
+    const { ctx } = makeCtx();
+    const next = await handleItemResult(ctx, { action: "cancel" }, {});
+    expect(next).toBe("back");
   });
 });

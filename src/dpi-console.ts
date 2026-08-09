@@ -1,8 +1,17 @@
 /**
- * dpi-console：统一 /dpi 控制台（gateway / repo / skill / ext 四类条目的
- * 列表构建 + 按键路由 + 添加流程）。
+ * dpi-console：统一 /dpi 控制台（三层导航：top repo 列表 → category
+ * Skills/Extensions/Gateways → items 条目列表）＋ 兼容的扁平列表构建。
  *
- * 条目来源：
+ * 三层状态机（runConsole）：
+ * - top：绑定仓库条目（repo:current，pick 进入 category）+「+ Add repo」
+ *   条目（pick / a 走 addRepoFlow 绑定）；s 走 inspectRepo 状态摘要。
+ * - category：Skills / Extensions 直接进入 runRegistryManager（其 toggle
+ *   列表即第三层）；Gateways 进入 gateway 条目列表（items 层，复用
+ *   handleConsoleResult 的 add/delete/status 逻辑；pick 复用 useGateway）。
+ * - items：gateway 条目（add/delete/status/pick），Esc 返回 category。
+ *
+ * 旧的扁平构建（buildConsoleItems / handleConsoleResult）保留不动，供既有
+ * 测试与内部复用；条目来源：
  * - gateway：scanGatewayProfiles（src/gateway-profile.ts）
  * - repo：config.repoUrl 绑定的内容仓库
  * - skill / ext：extensions/skill-manager.ts / extensions/ext-manager.ts 的
@@ -17,8 +26,10 @@
  * 本文件不放 extensions/（pi 会把每个 .ts 当扩展入口，无 default 导出会报错），
  * 由 extensions/dpi-console.ts 薄壳调用。
  */
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, readAgentManifest } from "./config.ts";
+import { inspectRepo } from "./repo-doctor.ts";
+import { useGateway } from "../extensions/gateway-manager.ts";
 import { safeAgentName } from "./common.ts";
 import { deleteCredential, validateRef, writeCredential } from "./credential-store.ts";
 import { fetchGatewayModels } from "./gateway-catalog.ts";
@@ -32,7 +43,7 @@ import {
 } from "./gateway-writer.ts";
 import { runRegistryManager } from "./registry-manager.ts";
 import { bindRepoWithKey } from "./repo-binder.ts";
-import type { VimListItem, VimListResult } from "./vim-list-picker.ts";
+import { showVimListPicker, type VimListItem, type VimListResult } from "./vim-list-picker.ts";
 import { config as extManagerConfig, scanRegistryExtensions } from "../extensions/ext-manager.ts";
 import { config as skillManagerConfig, scanRegistrySkills } from "../extensions/skill-manager.ts";
 
@@ -293,4 +304,290 @@ export async function handleConsoleResult(
   }
 
   return "done";
+}
+
+// ============================================================================
+// 三层导航（0.8.40）：top（repo 列表）→ category（Skills/Extensions/Gateways）
+// → items（条目列表）。旧的扁平构建函数保留，三层导航在其上叠加。
+// ============================================================================
+
+export type ConsoleLevel = "top" | "category" | "items";
+
+export type ConsoleNavKind = "repo" | "category" | "gateway" | "skill" | "ext";
+
+export interface ConsoleNavData {
+  level: ConsoleLevel;
+  kind: ConsoleNavKind;
+  id: string;
+  meta: string;
+}
+
+export type ItemKind = "gateway" | "skill" | "ext";
+
+/** top 层：绑定仓库条目（pick 进入 category）+「+ Add repo」条目（绑定仓库）。 */
+export function buildTopItems(cfg: { repoUrl: string; repoPath: string }): VimListItem<ConsoleNavData>[] {
+  const items: VimListItem<ConsoleNavData>[] = [];
+  if (cfg.repoUrl) {
+    items.push({
+      id: "repo:current",
+      label: `[repo] ${cfg.repoUrl}`,
+      meta: "bound",
+      data: { level: "top", kind: "repo", id: "current", meta: "bound" },
+    });
+  }
+  items.push({
+    id: "repo:add",
+    label: "+ Add repo (bind content repo)",
+    meta: "",
+    data: { level: "top", kind: "repo", id: "add", meta: "" },
+  });
+  return items;
+}
+
+/** category 层：Skills / Extensions / Gateways 三个固定分类。 */
+export function buildCategoryItems(): VimListItem<ConsoleNavData>[] {
+  return [
+    {
+      id: "Skills",
+      label: "Skills",
+      meta: "manage declared skills",
+      data: { level: "category", kind: "category", id: "Skills", meta: "manage declared skills" },
+    },
+    {
+      id: "Extensions",
+      label: "Extensions",
+      meta: "manage declared extensions",
+      data: { level: "category", kind: "category", id: "Extensions", meta: "manage declared extensions" },
+    },
+    {
+      id: "Gateways",
+      label: "Gateways",
+      meta: "list / add / delete gateway profiles",
+      data: { level: "category", kind: "category", id: "Gateways", meta: "list / add / delete gateway profiles" },
+    },
+  ];
+}
+
+/** items 层：gateway/skill/ext 条目列表（gateway 复用 scanGatewayProfiles；
+ * skill/ext 复用注册表扫描，已声明项打标）。 */
+export function buildItemList(
+  cfg: { repoPath: string; currentGateway: string; currentAgent?: string },
+  kind: ItemKind,
+): VimListItem<ConsoleNavData>[] {
+  if (kind === "gateway") {
+    return scanGatewayProfiles(cfg.repoPath).map((profile) => ({
+      id: `gateway:${profile.id}`,
+      label: `[gateway] ${profile.id}${profile.label ? ` — ${profile.label}` : ""}`,
+      meta:
+        profile.id === cfg.currentGateway
+          ? "selected *"
+          : `${profile.providers.length} provider${profile.providers.length === 1 ? "" : "s"}`,
+      data: { level: "items", kind: "gateway", id: profile.id, meta: profile.baseUrl },
+    }));
+  }
+  const declared = readAgentManifest(cfg.repoPath, safeAgentName(cfg.currentAgent ?? "coder"));
+  if (kind === "skill") {
+    return scanRegistrySkills(cfg.repoPath).map((skill) => ({
+      id: `skill:${skill.name}`,
+      label: skill.description ? `[skill] ${skill.name} — ${skill.description}` : `[skill] ${skill.name}`,
+      meta: declared.skills.includes(skill.name) ? "declared" : "",
+      data: { level: "items", kind: "skill", id: skill.name, meta: skill.description },
+    }));
+  }
+  return scanRegistryExtensions(cfg.repoPath).map((ext) => ({
+    id: `ext:${ext.name}`,
+    label: `[ext] ${ext.name}`,
+    meta: declared.extensions.includes(ext.name) ? "declared" : "",
+    data: { level: "items", kind: "ext", id: ext.name, meta: ext.description },
+  }));
+}
+
+/** top 层结果路由：pick 仓库 → "enter"（进 category）；a / pick add 条目 →
+ * addRepoFlow → "reopen"（重开 top 列表）；s → inspectRepo 状态摘要 → "reopen"；
+ * cancel → "done"（退出控制台）。 */
+export async function handleTopResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+): Promise<"enter" | "reopen" | "done"> {
+  if (!result || result.action === "cancel") return "done";
+  if (result.action === "add") {
+    await addRepoFlow(ctx);
+    return "reopen";
+  }
+  if (result.action === "status") {
+    const report = await inspectRepo({ network: false });
+    const lines = [
+      `repo: ${report.remoteUrl || "(not bound)"}`,
+      `branch: ${report.branch || "—"}`,
+      `head: ${report.head || "—"}`,
+      report.dirty ? "dirty: yes" : "dirty: clean",
+      ...(report.issues.length ? ["issues:", ...report.issues] : []),
+    ];
+    ctx.ui.notify(lines.join("\n"), report.ok ? "info" : "warning");
+    return "reopen";
+  }
+  if (result.action === "pick" && result.item) {
+    const item = result.item.data;
+    if (item.kind === "repo" && item.id === "add") {
+      await addRepoFlow(ctx);
+      return "reopen";
+    }
+    // 绑定的仓库条目 pick → 进入 category 层
+    return "enter";
+  }
+  return "done";
+}
+
+/** category 层结果路由：Skills / Extensions → runRegistryManager（其 toggle 列表
+ * 即第三层）→ "back"（回 category）；Gateways → "enter"（进 items 层）；
+ * cancel → "back"。 */
+export async function handleCategoryResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+): Promise<"enter" | "back" | "done"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const id = result.item.data.id;
+    if (id === "Skills") {
+      await runRegistryManager(ctx, skillManagerConfig);
+      return "back";
+    }
+    if (id === "Extensions") {
+      await runRegistryManager(ctx, extManagerConfig);
+      return "back";
+    }
+    if (id === "Gateways") return "enter";
+  }
+  return "back";
+}
+
+function toLegacyKind(kind: ConsoleNavKind): ConsoleItemData["kind"] {
+  return kind === "category" ? "repo" : kind;
+}
+
+/** items 层结果路由：pick gateway → useGateway（pi 注入时真实接线，否则占位提示）
+ * → "back"（回 category）；pick skill/ext → 名称+描述 → "back"；
+ * add/delete/status 复用 handleConsoleResult（空列表 add 直接走 addGatewayFlow）；
+ * cancel → "back"。 */
+export async function handleItemResult(
+  ctx: ExtensionCommandContext,
+  result: VimListResult<ConsoleNavData>,
+  options: { pi?: ExtensionAPI; fetchImpl?: typeof fetch } = {},
+): Promise<"back" | "reopen"> {
+  if (!result || result.action === "cancel") return "back";
+  if (result.action === "pick" && result.item) {
+    const item = result.item.data;
+    if (item.kind === "gateway") {
+      if (options.pi) {
+        await useGateway(options.pi, item.id, ctx);
+      } else {
+        ctx.ui.notify(`use gateway: ${item.id} (wire to applyProfile in extension)`, "info");
+      }
+      return "back";
+    }
+    if (item.kind === "skill" || item.kind === "ext") {
+      ctx.ui.notify(
+        item.meta ? `${item.kind}: ${item.id} — ${item.meta}` : `${item.kind}: ${item.id}`,
+        "info",
+      );
+      return "back";
+    }
+    return "back";
+  }
+  // 空列表 add：gateway 上下文直接走 addGatewayFlow（不落到 addRepoFlow）
+  if (result.action === "add" && !result.item) {
+    await addGatewayFlow(ctx, options);
+    return "reopen";
+  }
+  const legacy: VimListResult<ConsoleItemData> = {
+    action: result.action,
+    item: result.item
+      ? {
+          id: result.item.id,
+          label: result.item.label,
+          meta: result.item.meta,
+          data: {
+            kind: toLegacyKind(result.item.data.kind),
+            id: result.item.data.id,
+            meta: result.item.data.meta,
+          },
+        }
+      : undefined,
+    checked: result.checked,
+  };
+  const next = await handleConsoleResult(ctx, legacy, options);
+  return next === "reopen" ? "reopen" : "back";
+}
+
+/** 三层导航主循环：按 level 状态机路由，构建列表 → 处理结果 → 切换层级。
+ * options.pi 由扩展层注入（gateway pick 时复用 useGateway 完成真实接线）。 */
+export async function runConsole(
+  ctx: ExtensionCommandContext,
+  options: { pi?: ExtensionAPI; fetchImpl?: typeof fetch } = {},
+): Promise<void> {
+  if (!ctx.hasUI) {
+    const cfg = loadConfig();
+    ctx.ui.notify(
+      [
+        cfg.repoUrl ? `repo: ${cfg.repoUrl}` : "repo: none — use /dpi a to bind",
+        "categories: Skills · Extensions · Gateways",
+      ].join("\n"),
+      "info",
+    );
+    return;
+  }
+
+  let level: ConsoleLevel = "top";
+  let currentKind: ItemKind = "gateway";
+  for (;;) {
+    const cfg = loadConfig();
+    const items =
+      level === "top"
+        ? buildTopItems(cfg)
+        : level === "category"
+          ? buildCategoryItems()
+          : buildItemList(cfg, currentKind);
+    const title =
+      level === "top" ? "dpi console" : level === "category" ? "dpi — category" : `dpi — ${currentKind}`;
+    const actions =
+      level === "top"
+        ? [
+            { key: "a", id: "add", hint: "add" },
+            { key: "s", id: "status", hint: "status" },
+          ]
+        : level === "items"
+          ? [
+              { key: "a", id: "add", hint: "add" },
+              { key: "d", id: "delete", hint: "delete" },
+              { key: "s", id: "status", hint: "status" },
+            ]
+          : undefined;
+    const result = await showVimListPicker<ConsoleNavData>(ctx, {
+      title,
+      items,
+      mode: "select",
+      actions,
+      hint: "j/k nav · / filter · Enter select · Esc back/quit",
+    });
+    if (!result) return; // TUI 不可用/异常
+
+    if (level === "top") {
+      const next = await handleTopResult(ctx, result);
+      if (next === "done") return;
+      if (next === "enter") level = "category";
+      continue; // "reopen" 留在 top 层
+    }
+    if (level === "category") {
+      const next = await handleCategoryResult(ctx, result);
+      if (next === "done") return;
+      if (next === "enter") {
+        level = "items";
+        currentKind = "gateway";
+      }
+      continue; // "back" 留在 category 层
+    }
+    const next = await handleItemResult(ctx, result, options);
+    if (next === "back") level = "category";
+    // "reopen" 留在 items 层（列表已变化）
+  }
 }
