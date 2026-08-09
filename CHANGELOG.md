@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.51
+
+- Uniform thinking levels for gateway models: low/medium/high/max on every model (no per-model fine-tuning); official per-model thinkingLevelMap/compat passthrough removed (relay-station models don't expose them).
+
 ## 0.8.50
 
 - Models carry per-model thinkingLevelMap and compat from pi's official model catalog (deepseek-v4: high/max only, kimi-k3: no xhigh, thinkingFormat etc.); reasoning falls back to family rules when the catalog misses.
