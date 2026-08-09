@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.41
+
+- Ensure `profiles/` is in sparse-checkout before gateway add/delete (fixes writes on sparse repos).
+
 ## 0.8.40
 
 - Restructure `/dpi` console into three-level navigation: repo list → Skills/Extensions/Gateways → items.
