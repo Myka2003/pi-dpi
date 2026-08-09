@@ -159,6 +159,56 @@ describe("gateway provider/model management", () => {
     expect(r2.ok).toBe(false);
     expect(r2.error).toContain("missing");
   });
+
+  it("removeProvider returns ok:false with provider missing when the provider does not exist", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    const before = execFileSync("git", ["-C", work, "log", "--oneline"], { encoding: "utf-8" });
+    const r = await removeProvider(work, "gw", "nope", "rm nope");
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("provider missing: nope");
+    // 未发生任何写入/提交：供应商与提交历史均保持原样
+    expect(scanGatewayProfiles(work)[0].providers.map((p) => p.id)).toEqual(["p1"]);
+    const after = execFileSync("git", ["-C", work, "log", "--oneline"], { encoding: "utf-8" });
+    expect(after).toBe(before);
+  });
+
+  it("removeModel returns ok:false with model missing when the model does not exist", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    const before = execFileSync("git", ["-C", work, "log", "--oneline"], { encoding: "utf-8" });
+    const r = await removeModel(work, "gw", "p1", "nope", "rm nope");
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("model missing: nope");
+    // 未发生任何写入/提交：模型列表与提交历史均保持原样
+    expect(
+      scanGatewayProfiles(work)[0].providers.find((p) => p.id === "p1")!.models.map((m) => m.id),
+    ).toEqual(["a"]);
+    const after = execFileSync("git", ["-C", work, "log", "--oneline"], { encoding: "utf-8" });
+    expect(after).toBe(before);
+  });
 });
 
 describe("gateway writer", () => {

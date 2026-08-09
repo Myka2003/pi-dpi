@@ -21,6 +21,7 @@ import {
   buildModelList,
   buildAgentList,
   buildMachineList,
+  formatSessionsStatus,
   handleConsoleResult,
   handleTopResult,
   handleCategoryResult,
@@ -34,6 +35,7 @@ import {
 import { scanGatewayProfiles } from "../src/gateway-profile.ts";
 import { addProviderToGateway, buildGatewayProfile, commitPushGateway, writeGatewayProfile } from "../src/gateway-writer.ts";
 import { bindRepoWithKey } from "../src/repo-binder.ts";
+import { runSessionBrowser } from "../extensions/session-browser.ts";
 import type { ConsoleItemData, ConsoleNavData } from "../src/dpi-console.ts";
 import type { VimListItem, VimListResult } from "../src/vim-list-picker.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -44,8 +46,15 @@ vi.mock("../src/repo-binder.ts", () => ({
   bindRepoWithKey: vi.fn(),
 }));
 
+// Sessions 分类委托 runSessionBrowser（真实实现依赖 pi 扩展环境）；mock 掉以断言
+// 前缀传参，runSessionBrowser 自身逻辑由 session-browser 覆盖
+vi.mock("../extensions/session-browser.ts", () => ({
+  runSessionBrowser: vi.fn(),
+}));
+
 beforeEach(() => {
   vi.mocked(bindRepoWithKey).mockReset();
+  vi.mocked(runSessionBrowser).mockReset();
 });
 
 let repo = "";
@@ -847,5 +856,83 @@ describe("content-model console — agents and machines", () => {
     });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message.includes("Invalid machine name"))).toBe(true);
+  });
+});
+
+describe("dpi console — sessions status line and Sessions delegation", () => {
+  /** 在临时 HOME 的 dpi 目录写入 save-state.json（lastArchive），模拟最近归档 */
+  function seedLastArchive(time = "2026-08-09T12:34:56.789Z"): void {
+    const dpiDirPath = join(home, ".pi", "agent", "dpi");
+    mkdirSync(dpiDirPath, { recursive: true });
+    writeFileSync(
+      join(dpiDirPath, "save-state.json"),
+      JSON.stringify({ lastArchive: { time, session: "x.jsonl", result: "committed" } }),
+    );
+  }
+
+  it("formatSessionsStatus shows record on/off and no archive without a bound repo", async () => {
+    useTempHome();
+    const on = await formatSessionsStatus({ ...loadConfig(), recordSessions: true, repoUrl: "" });
+    expect(on).toBe("record: on · no archive");
+    const off = await formatSessionsStatus({ ...loadConfig(), recordSessions: false, repoUrl: "" });
+    expect(off).toBe("record: off · no archive");
+  });
+
+  it("formatSessionsStatus includes the last archive time from save-state", async () => {
+    useTempHome();
+    seedLastArchive();
+    const line = await formatSessionsStatus({ ...loadConfig(), recordSessions: true, repoUrl: "" });
+    expect(line).toBe("record: on · last archive 08-09 12:34");
+  });
+
+  it("formatSessionsStatus counts unpushed commits via a real git repo", async () => {
+    useTempHome();
+    const git = makeGitRepo(); // init 已 push 到 bare 远端
+    repo = git.work;
+    bare = git.bare;
+    execFileSync(
+      "git",
+      ["-C", git.work, "-c", "user.name=dpi", "-c", "user.email=dpi@users.noreply.github.com", "commit", "--allow-empty", "-m", "unpushed"],
+    );
+    const line = await formatSessionsStatus({
+      ...loadConfig(),
+      recordSessions: true,
+      repoUrl: "https://github.com/Myka2003/Agent.git",
+      repoPath: git.work,
+    });
+    expect(line).toBe("record: on · no archive · 1 unpushed");
+  });
+
+  it("handleCategoryResult Sessions delegates to runSessionBrowser with the full status prefix", async () => {
+    useTempHome();
+    const git = makeGitRepo();
+    repo = git.work;
+    bare = git.bare;
+    seedLastArchive();
+    execFileSync(
+      "git",
+      ["-C", git.work, "-c", "user.name=dpi", "-c", "user.email=dpi@users.noreply.github.com", "commit", "--allow-empty", "-m", "unpushed"],
+    );
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: git.work });
+
+    const stubPi = { registerProvider: vi.fn(), unregisterProvider: vi.fn() } as unknown as ExtensionAPI;
+    const { ctx } = makeCtx();
+    const next = await handleCategoryResult(
+      ctx,
+      {
+        action: "pick",
+        item: {
+          id: "Sessions",
+          label: "Sessions",
+          data: { level: "category", kind: "category", id: "Sessions", meta: "" },
+        },
+      },
+      { pi: stubPi },
+    );
+
+    expect(next).toBe("back");
+    expect(runSessionBrowser).toHaveBeenCalledWith(stubPi, ctx, {
+      titlePrefix: "Session Archive — record: on · last archive 08-09 12:34 · 1 unpushed",
+    });
   });
 });

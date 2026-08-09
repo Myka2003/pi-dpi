@@ -206,7 +206,8 @@ export async function addModelsToProvider(
   });
 }
 
-/** 删除供应商（不存在则静默 no-op 仍提交）；成功写回并 commit+push */
+/** 删除供应商（目标不存在返回 { ok:false, error:"provider missing: X" }，绝不静默
+ * no-op 提交）；成功写回并 commit+push */
 export async function removeProvider(
   repoPath: string,
   gatewayId: string,
@@ -214,11 +215,15 @@ export async function removeProvider(
   message: string,
 ): Promise<MutateResult> {
   return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
+    if (!p.providers.some((x) => x.id === providerId)) {
+      throw new Error(`provider missing: ${providerId}`);
+    }
     p.providers = p.providers.filter((x) => x.id !== providerId);
   });
 }
 
-/** 删除供应商下的单个模型（供应商缺失报错）；成功写回并 commit+push */
+/** 删除供应商下的单个模型（供应商缺失报 provider missing、模型缺失报
+ * model missing，返回 { ok:false, error }，绝不静默 no-op 提交）；成功写回并 commit+push */
 export async function removeModel(
   repoPath: string,
   gatewayId: string,
@@ -229,6 +234,9 @@ export async function removeModel(
   return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
     const prov = p.providers.find((x) => x.id === providerId);
     if (!prov) throw new Error(`provider missing: ${providerId}`);
+    if (!prov.models.some((x) => x.id === modelId)) {
+      throw new Error(`model missing: ${modelId}`);
+    }
     prov.models = prov.models.filter((x) => x.id !== modelId);
   });
 }
