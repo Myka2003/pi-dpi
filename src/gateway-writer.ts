@@ -172,7 +172,9 @@ export async function commitPushGateway(
     const { stdout } = await gitIn(repoPath, ["status", "--porcelain", "--", file], opts);
     if (stdout.trim().length === 0) return { committed: false, pushed: false };
     const identityArgs = await commitIdentityArgs(repoPath);
-    await gitIn(repoPath, [...identityArgs, "commit", "-m", message], opts);
+    // -- <file> 把提交范围限定为目标 profile：即使 index 中还有别的已暂存文件
+    // （如 dpi-sync 暂存的 session blob），也只提交该 profile，避免大文件误入提交。
+    await gitIn(repoPath, [...identityArgs, "commit", "-m", message, "--", file], opts);
   } catch (error) {
     return {
       committed: false,

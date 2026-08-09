@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -325,6 +325,47 @@ describe("gateway writer", () => {
       models: [],
     });
     expect(profile).toBeNull();
+  });
+
+  it("commits only the target gateway profile, leaving other staged files uncommitted", async () => {
+    const { work } = tempRepo();
+    // 预暂存一个与 gateway 无关的文件（复现 dpi-sync 暂存 session blob 的场景）
+    writeFileSync(join(work, "session.txt"), "session data\n");
+    execFileSync("git", ["-C", work, "add", "session.txt"]);
+
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+
+    // HEAD 提交只含目标 profile 一个文件
+    const headFiles = execFileSync(
+      "git",
+      ["-C", work, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+      { encoding: "utf-8" },
+    )
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    expect(headFiles).toEqual(["profiles/gateways/apimart.json"]);
+
+    // 无关文件仍保持已暂存未提交
+    const staged = execFileSync("git", ["-C", work, "diff", "--cached", "--name-only"], {
+      encoding: "utf-8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    expect(staged).toEqual(["session.txt"]);
   });
 
   it("writes, commits, pushes, then deletes", async () => {
