@@ -789,7 +789,7 @@ async function resolveGatewayApiKey(profile: GatewayProfile): Promise<string | n
   }
 }
 
-/** 添加供应商（schema 2 直写）：输入 id/名称/api/baseUrl/apiKey → 从
+/** 添加供应商（schema 2 直写）：输入 id/名称/baseUrl/apiKey → 最后选 API 类型 → 从
  * {baseUrl}/models 拉模型（baseUrl/apiKey 留空回退到 gateway 级）→ toggle 勾选 →
  * addProviderToGateway（含 baseUrl/apiKey 直写 + 校验 + commit+push）。 */
 export async function addProviderFlow(
@@ -824,18 +824,30 @@ export async function addProviderFlow(
     return;
   }
   const name = ((await ctx.ui.input("Provider name", id)) ?? "").trim() || id;
-  const apiInput = (
-    (await ctx.ui.input(`API (${[...ALLOWED_APIS].join(" | ")})`, "openai-completions")) ?? ""
-  ).trim();
-  if (!ALLOWED_APIS.has(apiInput)) {
-    ctx.ui.notify(`Invalid API: ${apiInput}`, "error");
-    return;
-  }
   // schema 2：provider 级 baseUrl/apiKey 直写；留空回退到 gateway 级
   const baseUrlInput = (
     (await ctx.ui.input(`Provider base URL (…/v1, Enter = ${profile.baseUrl})`, "")) ?? ""
   ).trim();
   const apiKeyInput = ((await ctx.ui.input("Provider API key (Enter = reuse gateway key)", "")) ?? "").trim();
+  // API 类型放最后：UI 模式用选择器（取消 → 中止流程，杜绝 URL 误粘贴进自由文本）；
+  // 非 UI 环境回退到输入框，仍走严格 ALLOWED_APIS 校验
+  let apiInput: string;
+  if (ctx.hasUI) {
+    const picked = await ctx.ui.select("Provider API type", [...ALLOWED_APIS]);
+    if (picked === undefined) return;
+    apiInput = picked;
+  } else {
+    apiInput = (
+      (await ctx.ui.input(`API (${[...ALLOWED_APIS].join(" | ")})`, "openai-completions")) ?? ""
+    ).trim();
+  }
+  if (!ALLOWED_APIS.has(apiInput)) {
+    ctx.ui.notify(
+      `Invalid API: ${apiInput} — choose one of: ${[...ALLOWED_APIS].join(", ")}`,
+      "error",
+    );
+    return;
+  }
   const providerBaseUrl = baseUrlInput || profile.baseUrl;
   // 直接 key 优先级：输入 → profile.apiKey → credentialRef 命令（schema 1 兼容）
   const key = apiKeyInput || profile.apiKey || (await resolveGatewayApiKey(profile));

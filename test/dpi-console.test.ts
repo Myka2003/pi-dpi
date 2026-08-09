@@ -110,6 +110,7 @@ afterEach(() => {
 interface UiState {
   notifyCalls: { message: string; type?: string }[];
   inputQueue: string[];
+  selectQueue: (string | undefined)[];
 }
 
 /** 真实 git 仓库（本地 bare 远端）：供应商/模型增删的 commit+push 全链路可用 */
@@ -152,19 +153,23 @@ async function seedGitGateway(): Promise<string> {
 /**
  * 最小 ctx stub：input 按队列吐值，notify 记录调用，custom 按队列吐
  * VimListResult（供应商/模型 toggle 选择器用；空队列返回 undefined）。
+ * opts.hasUI=false 时走非 UI 路径（API 类型回退到 input 提示）。
  */
-function makeCtx(customQueue: VimListResult<never>[] = []): { ctx: never; state: UiState } {
-  const state: UiState = { notifyCalls: [], inputQueue: [] };
+function makeCtx(
+  customQueue: VimListResult<never>[] = [],
+  opts: { hasUI?: boolean } = {},
+): { ctx: never; state: UiState } {
+  const state: UiState = { notifyCalls: [], inputQueue: [], selectQueue: [] };
   const queue = [...customQueue];
   const ctx = {
-    hasUI: true,
+    hasUI: opts.hasUI ?? true,
     ui: {
       input: async () => state.inputQueue.shift() ?? "",
       notify: (message: string, type?: "info" | "warning" | "error") => {
         state.notifyCalls.push({ message, type });
       },
       confirm: async () => true,
-      select: async () => "",
+      select: async () => state.selectQueue.shift(),
       custom: async () => queue.shift(),
     },
     reload: async () => {},
@@ -761,7 +766,8 @@ describe("content-model console — gateways providers/models navigation", () =>
     saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
 
     const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
-    state.inputQueue = ["p2", "P2", "openai-completions"];
+    state.inputQueue = ["p2", "P2"]; // id → name → baseUrl(Enter) → apiKey(Enter)
+    state.selectQueue = ["openai-completions"]; // API 类型选择器
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
@@ -810,13 +816,8 @@ describe("content-model console — gateways providers/models navigation", () =>
 
     // 输入含 provider 级 baseUrl/apiKey → schema 2 直写
     const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
-    state.inputQueue = [
-      "p2",
-      "P2",
-      "openai-completions",
-      "https://upstream.example.com/v1",
-      "sk-provider-secret",
-    ];
+    state.inputQueue = ["p2", "P2", "https://upstream.example.com/v1", "sk-provider-secret"];
+    state.selectQueue = ["openai-completions"];
     const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
     expect(next).toBe("reopen");
     expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
@@ -828,6 +829,56 @@ describe("content-model console — gateways providers/models navigation", () =>
     expect(p2.apiKey).toBe("sk-provider-secret");
     expect(p2.baseUrl).toBe("https://upstream.example.com/v1");
     expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("provider add flow aborts when the API type picker is cancelled", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["p2", "P2"];
+    // selectQueue 为空 → ui.select 返回 undefined（取消）→ 流程中止
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(false);
+    expect(scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!.providers).toHaveLength(1);
+  });
+
+  it("provider add flow non-UI fallback: API type accepted via input prompt", async () => {
+    useTempHome();
+    vi.stubEnv("DPI_CREDENTIAL_REF_SER7_CPA", "!echo sk-test");
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1"] }], { hasUI: false });
+    state.inputQueue = ["p2", "P2", "", "", "openai-completions"];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
+    const p2 = scanGatewayProfiles(work)
+      .find((p) => p.id === "ser7-cpa")!
+      .providers.find((p) => p.id === "p2")!;
+    expect(p2.api).toBe("openai-completions");
+  });
+
+  it("provider add flow non-UI fallback: URL pasted into the API field notifies the allowed list", async () => {
+    useTempHome();
+    const work = await seedGitGateway();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+    // 复现用户误粘贴：https://sui-xiang.com 被输入进 API 字段
+    const { ctx, state } = makeCtx([], { hasUI: false });
+    state.inputQueue = ["p2", "P2", "", "", "https://sui-xiang.com"];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(
+      state.notifyCalls.some(
+        (n) =>
+          n.message ===
+          "Invalid API: https://sui-xiang.com — choose one of: openai-completions, openai-responses, anthropic-messages, google-generative-ai",
+      ),
+    ).toBe(true);
+    expect(scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!.providers).toHaveLength(1);
   });
 
   it("schema 2 gateway use registers providers with the in-repo apiKey (consumer registration)", async () => {
