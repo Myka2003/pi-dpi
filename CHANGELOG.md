@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.48
+
+- Provider add form: base URL + key asked before API type; API type is a picker (no free-text URL mistakes).
+
 ## 0.8.47
 
 - Scope gateway commits to the target profile only (never sweep pre-staged session blobs).
