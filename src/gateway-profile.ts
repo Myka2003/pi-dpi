@@ -18,16 +18,19 @@ export interface GatewayProvider {
   id: string;
   name?: string;
   api: string;
+  baseUrl?: string; // schema 2：provider 级上游地址
+  apiKey?: string; // schema 2：provider 级 key（直接使用）
   compat?: Record<string, unknown>;
   models: GatewayModel[];
 }
 
 export interface GatewayProfile {
-  schema: 1;
+  schema: 1 | 2;
   id: string;
   label?: string;
   baseUrl: string;
-  credentialRef: string;
+  apiKey?: string; // schema 2：聚合入口凭据
+  credentialRef?: string; // schema 1 兼容
   providers: GatewayProvider[];
 }
 
@@ -48,6 +51,9 @@ function hasSensitiveKey(value: unknown, root = true): boolean {
   if (Array.isArray(value)) return value.some((item) => hasSensitiveKey(item, false));
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, child]) => {
+    // 内存对象上的 undefined 字段不会序列化进 JSON，不算敏感键（避免
+    // { baseUrl: undefined, apiKey: undefined } 误伤 schema 1 校验）
+    if (child === undefined) return false;
     if (!(root && key === "credentialRef") && SENSITIVE_KEY_RE.test(key)) return true;
     return hasSensitiveKey(child, false);
   });
@@ -68,6 +74,10 @@ function validBaseUrl(value: unknown): value is string {
   }
 }
 
+function validApiKey(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
 function validModel(value: unknown): value is GatewayModel {
   if (!isRecord(value) || typeof value.id !== "string" || value.id.length === 0) return false;
   if (value.name !== undefined && typeof value.name !== "string") return false;
@@ -81,21 +91,48 @@ function validModel(value: unknown): value is GatewayModel {
   return true;
 }
 
-function validProvider(value: unknown): value is GatewayProvider {
+function validProvider(value: unknown, schema: 1 | 2): value is GatewayProvider {
   if (!isRecord(value) || typeof value.id !== "string" || !ID_RE.test(value.id)) return false;
   if (value.name !== undefined && typeof value.name !== "string") return false;
   if (typeof value.api !== "string" || !ALLOWED_APIS.has(value.api)) return false;
   if (value.compat !== undefined && !isRecord(value.compat)) return false;
+  if (schema === 2) {
+    // schema 2：provider 级 baseUrl/apiKey 可选（baseUrl 同 validBaseUrl，apiKey 非空字符串）
+    if (value.baseUrl !== undefined && !validBaseUrl(value.baseUrl)) return false;
+    if (value.apiKey !== undefined && !validApiKey(value.apiKey)) return false;
+  }
+  // schema 1：保持原校验（provider.apiKey 由 hasSensitiveKey 在 profile 层拒绝）
   return Array.isArray(value.models) && value.models.every(validModel);
 }
 
 export function parseGatewayProfile(raw: unknown): GatewayProfile | null {
-  if (!isRecord(raw) || hasSensitiveKey(raw)) return null;
-  if (raw.schema !== 1 || typeof raw.id !== "string" || !ID_RE.test(raw.id)) return null;
+  if (!isRecord(raw)) return null;
+  if (raw.schema !== 1 && raw.schema !== 2) return null;
+  const schema = raw.schema as 1 | 2;
+  // 敏感键拒绝仅对 schema 1 生效：schema 2 允许 profile.apiKey / provider.apiKey
+  // 直接入库（私有仓库即安全边界）。
+  if (schema === 1 && hasSensitiveKey(raw)) return null;
+  if (typeof raw.id !== "string" || !ID_RE.test(raw.id)) return null;
   if (raw.label !== undefined && typeof raw.label !== "string") return null;
   if (!validBaseUrl(raw.baseUrl)) return null;
-  if (typeof raw.credentialRef !== "string" || !ID_RE.test(raw.credentialRef)) return null;
-  if (!Array.isArray(raw.providers) || raw.providers.length === 0 || !raw.providers.every(validProvider)) return null;
+  if (schema === 1) {
+    if (typeof raw.credentialRef !== "string" || !ID_RE.test(raw.credentialRef)) return null;
+  } else {
+    if (raw.apiKey !== undefined && !validApiKey(raw.apiKey)) return null;
+    if (
+      raw.credentialRef !== undefined &&
+      (typeof raw.credentialRef !== "string" || !ID_RE.test(raw.credentialRef))
+    ) {
+      return null;
+    }
+  }
+  if (
+    !Array.isArray(raw.providers) ||
+    raw.providers.length === 0 ||
+    !raw.providers.every((p) => validProvider(p, schema))
+  ) {
+    return null;
+  }
   return raw as unknown as GatewayProfile;
 }
 
@@ -156,4 +193,35 @@ export function resolveCredentialRef(
   } catch {
     return { kind: "missing", reason: `credential reference unavailable: ${ref}` };
   }
+}
+
+/** schema 2 直接 key 解析：provider.apiKey → profile.apiKey；均无则返回 null
+ * （表示走 schema 1 的 credentialRef 旧路径）。 */
+export function directGatewayKey(profile: GatewayProfile, provider: GatewayProvider): string | null {
+  if (typeof provider.apiKey === "string" && provider.apiKey !== "") return provider.apiKey;
+  if (typeof profile.apiKey === "string" && profile.apiKey !== "") return profile.apiKey;
+  return null;
+}
+
+/** 网关密钥来源：schema 2 直接字面量（直用）或 schema 1 的 credentialRef 命令。 */
+export type GatewaySecret =
+  | { kind: "command"; value: string }
+  | { kind: "direct"; value: string };
+
+/** 按优先级解析某 provider 的密钥：provider.apiKey → profile.apiKey（直用），
+ * 否则走 credentialRef 旧路径（schema 1 兼容）。 */
+export function resolveGatewaySecret(
+  profile: GatewayProfile,
+  provider: GatewayProvider,
+  env: NodeJS.ProcessEnv = process.env,
+  credentialDir: string = join(homedir(), ".config", "dpi", "credentials"),
+): GatewaySecret | { kind: "missing"; reason: string } {
+  const direct = directGatewayKey(profile, provider);
+  if (direct !== null) return { kind: "direct", value: direct };
+  if (typeof profile.credentialRef !== "string" || profile.credentialRef === "") {
+    return { kind: "missing", reason: "no apiKey and no credentialRef configured" };
+  }
+  const credential = resolveCredentialRef(profile.credentialRef, env, credentialDir);
+  if (credential.kind === "missing") return credential;
+  return { kind: "command", value: credential.value };
 }

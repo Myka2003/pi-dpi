@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../src/config.ts";
 import {
-  resolveCredentialRef,
+  resolveGatewaySecret,
   scanGatewayProfiles,
   type GatewayProfile,
 } from "../src/gateway-profile.ts";
@@ -31,13 +31,16 @@ function unregisterActive(pi: ExtensionAPI): void {
 }
 
 function applyProfile(pi: ExtensionAPI, profile: GatewayProfile): { ok: true } | { ok: false; reason: string } {
-  const credential = resolveCredentialRef(profile.credentialRef);
-  if (credential.kind === "missing") return { ok: false, reason: credential.reason };
-
   unregisterActive(pi);
   for (const provider of profile.providers) {
+    // schema 2：provider.apiKey → profile.apiKey 直用；否则 credentialRef 旧路径
+    const secret = resolveGatewaySecret(profile, provider);
+    if (secret.kind === "missing") {
+      unregisterActive(pi);
+      return { ok: false, reason: secret.reason };
+    }
     const id = gatewayProviderId(profile.id, provider.id);
-    const config = toPiProviderConfig(profile, provider, credential) as unknown as ProviderConfig;
+    const config = toPiProviderConfig(profile, provider, secret) as unknown as ProviderConfig;
     pi.registerProvider(id, config);
     activeProviderIds.push(id);
   }
@@ -46,10 +49,15 @@ function applyProfile(pi: ExtensionAPI, profile: GatewayProfile): { ok: true } |
 }
 
 function formatHealth(profile: GatewayProfile, report: Awaited<ReturnType<typeof checkGatewayHealth>>): string {
+  const keySource = profile.credentialRef
+    ? `credentialRef: ${profile.credentialRef}`
+    : profile.apiKey
+      ? "apiKey: (stored in profile)"
+      : "apiKey: none";
   return [
     `selected: ${profile.id}`,
     `baseUrl: ${profile.baseUrl}`,
-    `credentialRef: ${profile.credentialRef}`,
+    keySource,
     `credential: ${report.credential}`,
     `providers: ${report.providers}`,
     `models: ${report.models}`,

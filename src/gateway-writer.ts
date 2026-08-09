@@ -9,27 +9,46 @@ export interface AddGatewayInput {
   label: string;
   baseUrl: string;
   credentialRef: string;
+  apiKey?: string; // schema 2：key 直接入库（提供时写 schema 2 profile）
   providerId: string;
   api: GatewayProfile["providers"][number]["api"];
   models: GatewayModel[];
 }
 
 export function buildGatewayProfile(input: AddGatewayInput): GatewayProfile | null {
-  const profile: GatewayProfile = {
-    schema: 1,
-    id: input.id,
-    label: input.label,
-    baseUrl: input.baseUrl,
-    credentialRef: input.credentialRef,
-    providers: [
-      {
-        id: input.providerId,
-        name: input.label,
-        api: input.api,
-        models: input.models,
-      },
-    ],
-  };
+  // schema 2：apiKey 直接写进 profile（私有仓库即安全边界）；无 apiKey 时保持
+  // schema 1 的 credentialRef 旧格式（兼容）。
+  const profile: GatewayProfile = input.apiKey
+    ? {
+        schema: 2,
+        id: input.id,
+        label: input.label,
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
+        providers: [
+          {
+            id: input.providerId,
+            name: input.label,
+            api: input.api,
+            models: input.models,
+          },
+        ],
+      }
+    : {
+        schema: 1,
+        id: input.id,
+        label: input.label,
+        baseUrl: input.baseUrl,
+        credentialRef: input.credentialRef,
+        providers: [
+          {
+            id: input.providerId,
+            name: input.label,
+            api: input.api,
+            models: input.models,
+          },
+        ],
+      };
   return parseGatewayProfile(profile);
 }
 
@@ -189,6 +208,8 @@ export interface AddProviderInput {
   id: string;
   name?: string;
   api: GatewayProfile["providers"][number]["api"];
+  baseUrl?: string; // schema 2：provider 级上游地址
+  apiKey?: string; // schema 2：provider 级 key（直接入库）
   models: GatewayModel[];
 }
 
@@ -216,7 +237,9 @@ async function mutateGatewayProfile(
   }
 }
 
-/** 新增供应商：id 冲突时失败；成功写回并 commit+push */
+/** 新增供应商：id 冲突时失败；成功写回并 commit+push。provider 携带 schema 2
+ * 字段（baseUrl/apiKey）时把旧 schema 1 profile 自动提升为 schema 2（既有
+ * credentialRef 保留供兼容）。 */
 export async function addProviderToGateway(
   repoPath: string,
   gatewayId: string,
@@ -226,6 +249,9 @@ export async function addProviderToGateway(
   return mutateGatewayProfile(repoPath, gatewayId, message, (p) => {
     if (p.providers.some((x) => x.id === provider.id)) throw new Error(`provider exists: ${provider.id}`);
     p.providers.push(provider);
+    if (p.schema === 1 && (provider.baseUrl !== undefined || provider.apiKey !== undefined)) {
+      (p as GatewayProfile).schema = 2;
+    }
   });
 }
 

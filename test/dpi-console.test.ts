@@ -256,7 +256,7 @@ describe("dpi console — addGatewayFlow", () => {
     expect(readCredential("ok-gw")).toBeNull();
   });
 
-  it("happy path: credential + profile written, then commit attempted", async () => {
+  it("happy path: key written into the schema 2 profile, no credential store", async () => {
     useTempHome();
     vi.stubGlobal(
       "fetch",
@@ -269,15 +269,17 @@ describe("dpi console — addGatewayFlow", () => {
     const next = await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
 
     expect(next).toBe("reopen");
-    // key 只进 credential store（0600），不出现于任何 notify
-    expect(readCredential("my-gw")).toBe("sk-secret-abc");
+    // schema 2：key 直接写进 profile，不再落 credential store（私有仓库即安全边界）
+    expect(readCredential("my-gw")).toBeNull();
     expect(
       state.notifyCalls.every((n) => !n.message.includes("sk-secret-abc")),
     ).toBe(true);
-    // profile 落库
+    // profile 落库：schema 2 + apiKey + 扫描到的模型
     const profiles = scanGatewayProfiles(repoPath);
     expect(profiles).toHaveLength(1);
     expect(profiles[0].id).toBe("my-gw");
+    expect(profiles[0].schema).toBe(2);
+    expect(profiles[0].apiKey).toBe("sk-secret-abc");
     expect(profiles[0].providers[0].models.map((m) => m.id)).toEqual([
       "deepseek-v4-flash",
       "deepseek-v4-pro",
@@ -288,7 +290,7 @@ describe("dpi console — addGatewayFlow", () => {
     expect(last.message).toContain("commit=false");
   });
 
-  it("rolls back the credential when the model scan fails", async () => {
+  it("leaves no credential or profile behind when the model scan fails", async () => {
     useTempHome();
     vi.stubGlobal("fetch", mockFetch({ data: [] }, new Error("boom")));
     const repoPath = makeRepo();
@@ -298,12 +300,12 @@ describe("dpi console — addGatewayFlow", () => {
     const next = await handleConsoleResult(ctx, { action: "add", item: gatewayItem("ser7-cpa") });
 
     expect(next).toBe("reopen");
-    expect(readCredential("bad-gw")).toBeNull(); // 回滚：credential 已删
+    expect(readCredential("bad-gw")).toBeNull(); // 从未创建 credential
     expect(scanGatewayProfiles(repoPath)).toHaveLength(0); // 无半成品 profile
     expect(state.notifyCalls.some((n) => n.message.startsWith("Model scan failed:"))).toBe(true);
   });
 
-  it("rolls back the credential when the profile fails validation", async () => {
+  it("leaves no credential or profile behind when the profile fails validation", async () => {
     useTempHome();
     vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] }));
     const repoPath = makeRepo();
@@ -688,6 +690,77 @@ describe("content-model console — gateways providers/models navigation", () =>
     const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
     const p2 = gateway.providers.find((p) => p.id === "p2")!;
     expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("schema 2 provider add flow: baseUrl/apiKey written into the profile and committed+pushed", async () => {
+    useTempHome();
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }, { id: "m2" }] }));
+    const work = await seedGitGateway(); // 初始为 schema 1（credentialRef）
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath: work });
+
+    // 输入含 provider 级 baseUrl/apiKey → schema 2 直写
+    const { ctx, state } = makeCtx([{ action: "cancel", checked: ["m1", "m2"] }]);
+    state.inputQueue = [
+      "p2",
+      "P2",
+      "openai-completions",
+      "https://upstream.example.com/v1",
+      "sk-provider-secret",
+    ];
+    const next = await handleProviderListResult(ctx, "ser7-cpa", { action: "add" });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.some((n) => n.message.includes("Provider p2 added"))).toBe(true);
+    // key 不泄漏到 notify
+    expect(state.notifyCalls.every((n) => !n.message.includes("sk-provider-secret"))).toBe(true);
+    const gateway = scanGatewayProfiles(work).find((p) => p.id === "ser7-cpa")!;
+    expect(gateway.schema).toBe(2); // 自动提升为 schema 2
+    const p2 = gateway.providers.find((p) => p.id === "p2")!;
+    expect(p2.apiKey).toBe("sk-provider-secret");
+    expect(p2.baseUrl).toBe("https://upstream.example.com/v1");
+    expect(p2.models.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("schema 2 gateway use registers providers with the in-repo apiKey (consumer registration)", async () => {
+    useTempHome();
+    vi.stubGlobal("fetch", mockFetch({ data: [{ id: "m1" }] })); // health /models
+    const repoPath = makeRepo();
+    const profile = buildGatewayProfile({
+      id: "keygw",
+      label: "Key GW",
+      baseUrl: "https://gw.example.com/v1",
+      credentialRef: "keygw",
+      apiKey: "sk-in-repo",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "m1" }],
+    })!;
+    expect(profile.schema).toBe(2);
+    mkdirSync(join(repoPath, "profiles", "gateways"), { recursive: true });
+    writeFileSync(join(repoPath, "profiles", "gateways", "keygw.json"), JSON.stringify(profile));
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+
+    const stubPi = { registerProvider: vi.fn(), unregisterProvider: vi.fn() } as unknown as ExtensionAPI;
+    const { ctx, state } = makeCtx();
+    const next = await handleItemResult(
+      ctx,
+      {
+        action: "pick",
+        item: {
+          id: "gateway:keygw",
+          label: "[gateway] keygw",
+          data: { level: "items", kind: "gateway", id: "keygw", meta: "" },
+        },
+      },
+      { pi: stubPi },
+    );
+    expect(next).toBe("back");
+    expect(state.notifyCalls.some((n) => n.message.includes("Gateway selected: keygw"))).toBe(true);
+    const calls = vi.mocked(stubPi.registerProvider).mock.calls;
+    expect(calls).toHaveLength(1);
+    const config = calls[0][1] as { apiKey: string; baseUrl: string };
+    // schema 2：provider.apiKey 字面量直用（非 !command 形式），baseUrl 直用 profile 级
+    expect(config.apiKey).toBe("sk-in-repo");
+    expect(config.baseUrl).toBe("https://gw.example.com/v1");
   });
 
   it("provider delete flow removes the provider committed+pushed", async () => {

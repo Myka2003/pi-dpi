@@ -21,21 +21,41 @@ async function resolveSecret(command: string): Promise<string> {
 
 export async function checkGatewayHealth(
   profile: GatewayProfile,
-  options: { fetchImpl?: typeof fetch; timeoutMs?: number; env?: NodeJS.ProcessEnv; credentialDir?: string } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    env?: NodeJS.ProcessEnv;
+    credentialDir?: string;
+    apiKey?: string; // schema 2：显式直用 key
+  } = {},
 ): Promise<GatewayHealthReport> {
   const issues: string[] = [];
   const providers = profile.providers.length;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const credential = resolveCredentialRef(profile.credentialRef, options.env, options.credentialDir);
-  if (credential.kind === "missing") {
-    return { ok: false, credential: "missing", endpoint: "unchecked", models: 0, providers, issues: [credential.reason] };
-  }
-
+  const directKey = options.apiKey ?? profile.apiKey; // 显式参数优先，其次 profile 级聚合 key
   let token = "";
-  try {
-    token = await resolveSecret(credential.value);
-  } catch {
-    return { ok: false, credential: "missing", endpoint: "unchecked", models: 0, providers, issues: [`credential command failed: ${profile.credentialRef}`] };
+  if (typeof directKey === "string" && directKey !== "") {
+    token = directKey;
+  } else if (typeof profile.credentialRef === "string" && profile.credentialRef !== "") {
+    const credential = resolveCredentialRef(profile.credentialRef, options.env, options.credentialDir);
+    if (credential.kind === "missing") {
+      return { ok: false, credential: "missing", endpoint: "unchecked", models: 0, providers, issues: [credential.reason] };
+    }
+    try {
+      token = await resolveSecret(credential.value);
+    } catch {
+      return { ok: false, credential: "missing", endpoint: "unchecked", models: 0, providers, issues: [`credential command failed: ${profile.credentialRef}`] };
+    }
+  } else {
+    // schema 2 无任何 key：credentialRef 缺失不再报错（不崩溃），如实报告 missing
+    return {
+      ok: false,
+      credential: "missing",
+      endpoint: "unchecked",
+      models: 0,
+      providers,
+      issues: ["no apiKey or credentialRef configured"],
+    };
   }
 
   const started = Date.now();

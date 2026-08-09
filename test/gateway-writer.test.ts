@@ -211,6 +211,94 @@ describe("gateway provider/model management", () => {
   });
 });
 
+describe("gateway writer — schema 2 (keys in repo)", () => {
+  it("addProviderToGateway writes apiKey/baseUrl and upgrades the profile to schema 2", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    expect(base.schema).toBe(1);
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    const r = await addProviderToGateway(
+      work,
+      "gw",
+      {
+        id: "p2",
+        name: "P2",
+        api: "openai-completions",
+        baseUrl: "https://upstream.example.com/v1",
+        apiKey: "sk-provider",
+        models: [{ id: "b" }],
+      },
+      "add p2",
+    );
+    expect(r.ok).toBe(true);
+    const profile = scanGatewayProfiles(work)[0];
+    expect(profile.schema).toBe(2); // 旧 schema 1 自动提升
+    const p2 = profile.providers.find((p) => p.id === "p2")!;
+    expect(p2.apiKey).toBe("sk-provider");
+    expect(p2.baseUrl).toBe("https://upstream.example.com/v1");
+    // 原 schema 1 provider 原样保留
+    const p1 = profile.providers.find((p) => p.id === "p1")!;
+    expect(p1.apiKey).toBeUndefined();
+  });
+
+  it("model mutations preserve provider apiKey/baseUrl on rewrite", async () => {
+    const { work } = tempRepo();
+    const base = buildGatewayProfile({
+      id: "gw",
+      label: "GW",
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "sk-gw",
+      credentialRef: "k",
+      providerId: "p1",
+      api: "openai-completions",
+      models: [{ id: "a" }],
+    })!;
+    expect(base.schema).toBe(2);
+    writeGatewayProfile(work, base);
+    await commitPushGateway(work, "gw", "init");
+
+    // 追加模型：profile 级 apiKey 与 provider 字段保留
+    let r = await addModelsToProvider(work, "gw", "p1", [{ id: "b" }], "add b");
+    expect(r.ok).toBe(true);
+    let current = scanGatewayProfiles(work)[0];
+    expect(current.apiKey).toBe("sk-gw");
+    expect(current.providers.find((p) => p.id === "p1")!.apiKey).toBeUndefined();
+    expect(current.providers.find((p) => p.id === "p1")!.models.map((m) => m.id)).toEqual(["a", "b"]);
+
+    // 追加带 key 的 provider 后删除模型：两个 provider 的 key 都保留
+    r = await addProviderToGateway(
+      work,
+      "gw",
+      { id: "p2", api: "openai-completions", apiKey: "sk-p2", baseUrl: "https://u.example.com/v1", models: [{ id: "c" }] },
+      "add p2",
+    );
+    expect(r.ok).toBe(true);
+    r = await removeModel(work, "gw", "p2", "c", "rm c");
+    expect(r.ok).toBe(true);
+    const after = scanGatewayProfiles(work)[0];
+    expect(after.providers.find((p) => p.id === "p2")!.apiKey).toBe("sk-p2");
+    expect(after.providers.find((p) => p.id === "p2")!.baseUrl).toBe("https://u.example.com/v1");
+    expect(after.providers.find((p) => p.id === "p2")!.models).toEqual([]);
+
+    // 删除 provider：其余 provider 的 key 保留
+    r = await removeProvider(work, "gw", "p1", "rm p1");
+    expect(r.ok).toBe(true);
+    const final = scanGatewayProfiles(work)[0];
+    expect(final.providers.map((p) => p.id)).toEqual(["p2"]);
+    expect(final.providers[0].apiKey).toBe("sk-p2");
+  });
+});
+
 describe("gateway writer", () => {
   it("builds a valid profile that parses back", () => {
     const profile = buildGatewayProfile({

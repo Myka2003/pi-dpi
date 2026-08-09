@@ -1,4 +1,9 @@
-import type { GatewayProfile, GatewayModel, GatewayProvider } from "./gateway-profile.ts";
+import type {
+  GatewayProfile,
+  GatewayModel,
+  GatewayProvider,
+  GatewaySecret,
+} from "./gateway-profile.ts";
 
 export const MANAGED_PROVIDER_PREFIX = "dpi-gateway-";
 
@@ -12,11 +17,23 @@ export function managedProviderId(gatewayId: string, providerId: string): string
   return `${MANAGED_PROVIDER_PREFIX}${gatewayId}-${providerId}`;
 }
 
-function providerProjection(profile: GatewayProfile, provider: GatewayProvider, apiKey: string): JsonRecord {
+/** provider 级上游地址：仅 schema 2 允许 provider.baseUrl 覆盖；schema 1 保持
+ * 投影到 profile.baseUrl（旧路径，provider.baseUrl 字段被忽略）。 */
+function providerBaseUrl(profile: GatewayProfile, provider: GatewayProvider): string {
+  return profile.schema === 2 && provider.baseUrl !== undefined ? provider.baseUrl : profile.baseUrl;
+}
+
+/** 投影为 pi provider 的 apiKey：schema 1 的命令（credentialRef）以 `!command`
+ * 形式由 pi 运行时取明文；schema 2 的直接 key 按字面量直用。 */
+function secretApiKey(secret: GatewaySecret): string {
+  return secret.kind === "command" ? `!${secret.value}` : secret.value;
+}
+
+function providerProjection(profile: GatewayProfile, provider: GatewayProvider, secret: GatewaySecret): JsonRecord {
   const value: JsonRecord = {
-    baseUrl: profile.baseUrl,
+    baseUrl: providerBaseUrl(profile, provider),
     api: provider.api,
-    apiKey: `!${apiKey}`,
+    apiKey: secretApiKey(secret),
     models: provider.models,
   };
   if (provider.name !== undefined) value.name = provider.name;
@@ -27,7 +44,7 @@ function providerProjection(profile: GatewayProfile, provider: GatewayProvider, 
 export function projectGatewayModels(
   existing: unknown,
   profile: GatewayProfile,
-  credential: { kind: "command"; value: string },
+  secret: GatewaySecret,
 ): JsonRecord {
   const root: JsonRecord = isRecord(existing) ? { ...existing } : {};
   const existingProviders = isRecord(root.providers) ? root.providers : {};
@@ -36,7 +53,7 @@ export function projectGatewayModels(
     if (!id.startsWith(MANAGED_PROVIDER_PREFIX)) providers[id] = value;
   }
   for (const provider of profile.providers) {
-    providers[managedProviderId(profile.id, provider.id)] = providerProjection(profile, provider, credential.value);
+    providers[managedProviderId(profile.id, provider.id)] = providerProjection(profile, provider, secret);
   }
   root.providers = providers;
   return root;
@@ -63,13 +80,13 @@ function piModel(model: GatewayModel): JsonRecord {
 export function toPiProviderConfig(
   profile: GatewayProfile,
   provider: GatewayProvider,
-  credential: { kind: "command"; value: string },
+  secret: GatewaySecret,
 ): JsonRecord {
   return {
     name: provider.name ?? `${profile.label ?? profile.id} ${provider.id}`,
-    baseUrl: profile.baseUrl,
+    baseUrl: providerBaseUrl(profile, provider),
     api: provider.api,
-    apiKey: `!${credential.value}`,
+    apiKey: secretApiKey(secret),
     models: provider.models.map(piModel),
     ...(provider.compat ? { compat: provider.compat } : {}),
   };

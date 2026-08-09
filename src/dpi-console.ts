@@ -19,9 +19,11 @@
  * 旧的扁平构建（buildConsoleItems / handleConsoleResult）与三层构建
  * （buildItemList / handleItemResult）保留不动，供既有测试与兼容复用。
  *
- * add-gateway 流程严格按顺序：输入 id/label/baseUrl/key → writeCredential →
- * fetchGatewayModels → buildGatewayProfile → writeGatewayProfile →
- * commitPushGateway → notify；commit 前任何一步失败都回滚删除 credential。
+ * add-gateway 流程严格按顺序：输入 id/label/baseUrl/key → fetchGatewayModels →
+ * buildGatewayProfile（schema 2，key 直接写进 profile）→ writeGatewayProfile →
+ * commitPushGateway → notify；key 只传给 fetchGatewayModels 与 profile，绝不进
+ * notify / 日志。schema 2 不再落 credential store（私有仓库即安全边界），
+ * credential-store 仅保留给 schema 1 兼容与其他用途。
  * 供应商/模型增删全部走 gateway-writer 的 mutate 路径（校验→写回→commit+push），
  * 失败 { ok:false } 不抛，UI 层 notify。
  *
@@ -45,11 +47,12 @@ import { inspectRepo } from "./repo-doctor.ts";
 import { useGateway } from "../extensions/gateway-manager.ts";
 import { runSessionBrowser } from "../extensions/session-browser.ts";
 import { safeAgentName } from "./common.ts";
-import { deleteCredential, validateRef, writeCredential } from "./credential-store.ts";
+import { deleteCredential, validateRef } from "./credential-store.ts";
 import { fetchGatewayModels } from "./gateway-catalog.ts";
 import { checkGatewayHealth } from "./gateway-health.ts";
 import {
   ALLOWED_APIS,
+  directGatewayKey,
   resolveCredentialRef,
   scanGatewayProfiles,
   type GatewayModel,
@@ -135,11 +138,11 @@ export function buildConsoleItems(cfg: ConsoleItemsConfig): VimListItem<ConsoleI
 
 /**
  * add-gateway 流程（严格按顺序）：
- * 输入 id/label/baseUrl/key → writeCredential → fetchGatewayModels →
- * buildGatewayProfile → writeGatewayProfile → commitPushGateway → notify。
- * commit 前任何一步失败回滚删除 credential，不留半成品。
- * options.fetchImpl 仅测试注入用；key 只传给 fetchGatewayModels 与
- * writeCredential，绝不进 notify / 日志。
+ * 输入 id/label/baseUrl/key → fetchGatewayModels → buildGatewayProfile（schema 2，
+ * key 直接写进 profile）→ writeGatewayProfile → commitPushGateway → notify。
+ * schema 2 不再创建 credential（私有仓库即安全边界）；失败即返回，不留半成品。
+ * options.fetchImpl 仅测试注入用；key 只传给 fetchGatewayModels 与 profile，
+ * 绝不进 notify / 日志。
  */
 export async function addGatewayFlow(
   ctx: ExtensionCommandContext,
@@ -163,37 +166,30 @@ export async function addGatewayFlow(
     return;
   }
 
-  // key 先落本机 credential store（0600）；失败则中止，不产生半成品
-  if (!writeCredential(id, key)) {
-    ctx.ui.notify("Failed to store credential (0600 file)", "error");
-    return;
-  }
-
   let models: GatewayModel[];
   try {
     models = await fetchGatewayModels(baseUrl, key, { fetchImpl: options.fetchImpl });
   } catch (error) {
-    deleteCredential(id);
     ctx.ui.notify(`Model scan failed: ${error instanceof Error ? error.message : String(error)}`, "error");
     return;
   }
 
+  // schema 2：key 直接写进 profile，不再落 credential store
   const profile = buildGatewayProfile({
     id,
     label,
     baseUrl,
+    apiKey: key,
     credentialRef: id,
     providerId: id,
     api: "openai-completions",
     models,
   });
   if (!profile) {
-    deleteCredential(id);
     ctx.ui.notify("Profile failed validation (check baseUrl)", "error");
     return;
   }
   if (!writeGatewayProfile(cfg.repoPath, profile)) {
-    deleteCredential(id);
     ctx.ui.notify("Failed to write profile", "error");
     return;
   }
@@ -692,8 +688,10 @@ export async function handleItemResult(
 // ----------------------------------------------------------------------------
 
 /** 解析 gateway 的 API key：credentialRef → 命令解析 → 执行取明文（与
- * gateway-health 的 resolveSecret 同构）。失败返回 null（不抛）。 */
+ * gateway-health 的 resolveSecret 同构）。失败返回 null（不抛）。schema 2 的
+ * profile.apiKey 由调用方先经 directGatewayKey 处理，本函数只兜底旧路径。 */
 async function resolveGatewayApiKey(profile: GatewayProfile): Promise<string | null> {
+  if (typeof profile.credentialRef !== "string" || profile.credentialRef === "") return null;
   const credential = resolveCredentialRef(profile.credentialRef);
   if (credential.kind === "missing") return null;
   try {
@@ -707,8 +705,9 @@ async function resolveGatewayApiKey(profile: GatewayProfile): Promise<string | n
   }
 }
 
-/** 添加供应商：输入 id/名称/api → /models 拉模型 → toggle 勾选 →
- * addProviderToGateway（commit+push）。key 从 gateway 既有 credentialRef 解析。 */
+/** 添加供应商（schema 2 直写）：输入 id/名称/api/baseUrl/apiKey → 从
+ * {baseUrl}/models 拉模型（baseUrl/apiKey 留空回退到 gateway 级）→ toggle 勾选 →
+ * addProviderToGateway（含 baseUrl/apiKey 直写 + 校验 + commit+push）。 */
 export async function addProviderFlow(
   ctx: ExtensionCommandContext,
   gatewayId: string,
@@ -741,17 +740,24 @@ export async function addProviderFlow(
     ctx.ui.notify(`Invalid API: ${apiInput}`, "error");
     return;
   }
-  const key = await resolveGatewayApiKey(profile);
-  if (key === null) {
+  // schema 2：provider 级 baseUrl/apiKey 直写；留空回退到 gateway 级
+  const baseUrlInput = (
+    (await ctx.ui.input(`Provider base URL (…/v1, Enter = ${profile.baseUrl})`, "")) ?? ""
+  ).trim();
+  const apiKeyInput = ((await ctx.ui.input("Provider API key (Enter = reuse gateway key)", "")) ?? "").trim();
+  const providerBaseUrl = baseUrlInput || profile.baseUrl;
+  // 直接 key 优先级：输入 → profile.apiKey → credentialRef 命令（schema 1 兼容）
+  const key = apiKeyInput || profile.apiKey || (await resolveGatewayApiKey(profile));
+  if (!key) {
     ctx.ui.notify(
-      `Credential unavailable for gateway ${gatewayId} (ref ${profile.credentialRef}) — add the key first`,
+      `No API key available for provider ${id} — enter one or add a gateway key first`,
       "error",
     );
     return;
   }
   let models: GatewayModel[];
   try {
-    models = await fetchGatewayModels(profile.baseUrl, key, { fetchImpl: options.fetchImpl });
+    models = await fetchGatewayModels(providerBaseUrl, key, { fetchImpl: options.fetchImpl });
   } catch (error) {
     ctx.ui.notify(
       `Model scan failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -774,7 +780,15 @@ export async function addProviderFlow(
   const result = await addProviderToGateway(
     cfg.repoPath,
     gatewayId,
-    { id, name, api: apiInput, models: selected },
+    {
+      id,
+      name,
+      api: apiInput,
+      models: selected,
+      // schema 2 字段仅在用户填写时写入（避免 undefined 键污染对象）
+      ...(baseUrlInput ? { baseUrl: baseUrlInput } : {}),
+      ...(apiKeyInput ? { apiKey: apiKeyInput } : {}),
+    },
     `feat: add provider ${id} to gateway ${gatewayId}`,
   );
   ctx.ui.notify(
@@ -786,7 +800,8 @@ export async function addProviderFlow(
 }
 
 /** 追加模型：/models 拉模型 → toggle 勾选（已存在项预勾选）→
- * addModelsToProvider（commit+push）。 */
+ * addModelsToProvider（commit+push）。key 优先级：provider.apiKey →
+ * profile.apiKey（schema 2 直用）→ credentialRef 命令（schema 1 兼容）。 */
 export async function addModelsFlow(
   ctx: ExtensionCommandContext,
   gatewayId: string,
@@ -804,17 +819,18 @@ export async function addModelsFlow(
     ctx.ui.notify(`Unknown provider: ${providerId}`, "error");
     return;
   }
-  const key = await resolveGatewayApiKey(profile);
+  const providerBaseUrl = provider.baseUrl ?? profile.baseUrl;
+  const key = directGatewayKey(profile, provider) ?? (await resolveGatewayApiKey(profile));
   if (key === null) {
     ctx.ui.notify(
-      `Credential unavailable for gateway ${gatewayId} (ref ${profile.credentialRef}) — add the key first`,
+      `No API key available for gateway ${gatewayId} — add a gateway/provider key first`,
       "error",
     );
     return;
   }
   let models: GatewayModel[];
   try {
-    models = await fetchGatewayModels(profile.baseUrl, key, { fetchImpl: options.fetchImpl });
+    models = await fetchGatewayModels(providerBaseUrl, key, { fetchImpl: options.fetchImpl });
   } catch (error) {
     ctx.ui.notify(
       `Model scan failed: ${error instanceof Error ? error.message : String(error)}`,
