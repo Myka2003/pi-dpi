@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join, relative } from "node:path";
+import { homedir } from "node:os";
 
 export interface GatewayModel {
   id: string;
@@ -131,17 +132,28 @@ export type CredentialResolution =
   | { kind: "command"; value: string }
   | { kind: "missing"; reason: string };
 
+function normalizeCredentialCommand(command: string, ref: string): CredentialResolution {
+  const trimmed = command.trim();
+  if (trimmed === "" || !trimmed.startsWith("!") || trimmed.slice(1).trim() === "") {
+    return { kind: "missing", reason: `credential reference is not command-backed: ${ref}` };
+  }
+  return { kind: "command", value: trimmed.slice(1).trim() };
+}
+
 export function resolveCredentialRef(
   ref: string,
   env: NodeJS.ProcessEnv = process.env,
+  credentialDir: string = join(homedir(), ".config", "dpi", "credentials"),
 ): CredentialResolution {
   const value = env[credentialEnvName(ref)];
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value === "string" && value.trim() !== "") {
+    return normalizeCredentialCommand(value, ref);
+  }
+  // Fallback: user credential command file (0600) in credentialDir/<ref>.
+  try {
+    const fileValue = readFileSync(join(credentialDir, ref), "utf-8");
+    return normalizeCredentialCommand(fileValue, ref);
+  } catch {
     return { kind: "missing", reason: `credential reference unavailable: ${ref}` };
   }
-  const command = value.trim();
-  if (!command.startsWith("!") || command.slice(1).trim() === "") {
-    return { kind: "missing", reason: `credential reference is not command-backed: ${ref}` };
-  }
-  return { kind: "command", value: command.slice(1).trim() };
 }
