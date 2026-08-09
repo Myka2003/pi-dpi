@@ -32,8 +32,10 @@ export function writeCredential(ref: string, key: string): boolean {
 export function readCredential(ref: string): string | null {
   if (!validateRef(ref)) return null;
   try {
+    // 多行内容（SSH 私钥）整块在一个引号对里：dotAll 让 . 匹配 \n，
+    // trim 只去掉文件末尾的换行（引号闭合符之后），引号内换行原样保留
     const line = readFileSync(join(credentialDir(), ref), "utf-8").trim();
-    const m = /^!printf %s (.+)$/.exec(line);
+    const m = /^!printf %s (.+)$/s.exec(line);
     if (!m) return null;
     const raw = m[1];
     if (raw.startsWith("'") && raw.endsWith("'")) {

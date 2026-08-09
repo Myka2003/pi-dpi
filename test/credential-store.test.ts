@@ -37,6 +37,29 @@ describe("credential store", () => {
     expect(readCredential("quoted")).toBe("a'b");
   });
 
+  it("round-trips multi-line keys (fake SSH private key)", () => {
+    useTempHome();
+    const key = [
+      "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ng",
+      "AAAAIQM4b3b8x3examplematerial",
+      "-----END OPENSSH PRIVATE KEY-----",
+    ].join("\n");
+    expect(writeCredential("sshkey", key)).toBe(true);
+    expect(readCredential("sshkey")).toBe(key);
+    // 文件保留单引号包裹的多行内容，shell 求值后即为原 key
+    expect(readFileSync(join(root, ".config", "dpi", "credentials", "sshkey"), "utf-8")).toBe(
+      `!printf %s '${key}'\n`,
+    );
+  });
+
+  it("round-trips a multi-line key ending in a trailing newline", () => {
+    useTempHome();
+    const key = "line one\nline two\n";
+    expect(writeCredential("sshkey-nl", key)).toBe(true);
+    expect(readCredential("sshkey-nl")).toBe(key);
+  });
+
   it("delete removes the file", () => {
     useTempHome();
     writeCredential("gone", "x");

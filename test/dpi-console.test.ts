@@ -5,17 +5,28 @@
  * 约定：HOME 指到临时目录隔离 config 与 credential store；add-gateway 的
  * 网络调用通过 vi.stubGlobal("fetch") 注入 mock，保证测试免网络。
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveConfig } from "../src/config.ts";
-import { readCredential } from "../src/credential-store.ts";
+import { readCredential, writeCredential } from "../src/credential-store.ts";
 import { buildConsoleItems, handleConsoleResult } from "../src/dpi-console.ts";
 import { scanGatewayProfiles } from "../src/gateway-profile.ts";
 import { buildGatewayProfile } from "../src/gateway-writer.ts";
+import { bindRepoWithKey } from "../src/repo-binder.ts";
 import type { ConsoleItemData } from "../src/dpi-console.ts";
 import type { VimListItem, VimListResult } from "../src/vim-list-picker.ts";
+
+// addRepoFlow 委托给 bindRepoWithKey（写 key/config + clone）；mock 掉真实克隆，
+// 保持测试离线确定性（bindRepoWithKey 自身的落地逻辑在 repo-binder.test.ts 覆盖）
+vi.mock("../src/repo-binder.ts", () => ({
+  bindRepoWithKey: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(bindRepoWithKey).mockReset();
+});
 
 let repo = "";
 let home = "";
@@ -233,19 +244,53 @@ describe("dpi console — addGatewayFlow", () => {
 });
 
 describe("dpi console — handleConsoleResult routing", () => {
-  it("routes add on a repo item to addRepoFlow", async () => {
+  it("routes add on a repo item to addRepoFlow → bindRepoWithKey, notifying the error", async () => {
     useTempHome();
+    vi.mocked(bindRepoWithKey).mockResolvedValue({ ok: false, error: "clone failed: boom" });
     const { ctx, state } = makeCtx();
-    state.inputQueue = ["https://github.com/Myka2003/Agent.git", "-----BEGIN OPENSSH PRIVATE KEY-----\nabc"];
+    state.inputQueue = [
+      "https://github.com/Myka2003/Agent.git",
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nabc",
+    ];
     const next = await handleConsoleResult(ctx, { action: "add", item: repoItem() });
 
     expect(next).toBe("reopen");
-    const credDir = join(home, ".config", "dpi", "credentials");
-    const files = readdirSync(credDir);
-    expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^repo-\d+$/);
-    expect(readFileSync(join(credDir, files[0]), "utf-8")).toContain("BEGIN OPENSSH PRIVATE KEY");
-    expect(state.notifyCalls.at(-1)?.message).toContain("Repo binding staged");
+    // addRepoFlow 直接委托 binder，不再暂存 repo-<ts> credential
+    expect(bindRepoWithKey).toHaveBeenCalledWith(
+      "https://github.com/Myka2003/Agent.git",
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nabc",
+    );
+    expect(state.notifyCalls.at(-1)?.message).toContain("clone failed: boom");
+  });
+
+  it("notifies success when the repo binds", async () => {
+    useTempHome();
+    vi.mocked(bindRepoWithKey).mockResolvedValue({ ok: true });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://github.com/Myka2003/Agent.git", "PRIVATE KEY MATERIAL"];
+    const next = await handleConsoleResult(ctx, { action: "add", item: repoItem() });
+    expect(next).toBe("reopen");
+    expect(state.notifyCalls.at(-1)?.message).toContain("Repo bound");
+  });
+
+  it("empty-list add with no bound repo runs addRepoFlow", async () => {
+    useTempHome();
+    vi.mocked(bindRepoWithKey).mockResolvedValue({ ok: true });
+    const { ctx, state } = makeCtx();
+    state.inputQueue = ["https://github.com/Myka2003/Agent.git", "key-material"];
+    const next = await handleConsoleResult(ctx, { action: "add" });
+    expect(next).toBe("reopen");
+    expect(bindRepoWithKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty-list add with a bound repo notifies and quits (no infinite reopen)", async () => {
+    useTempHome();
+    const repoPath = makeRepo();
+    saveConfig({ repoUrl: "https://github.com/Myka2003/Agent.git", repoPath });
+    const { ctx, state } = makeCtx();
+    const next = await handleConsoleResult(ctx, { action: "add" });
+    expect(next).toBe("done");
+    expect(state.notifyCalls.some((n) => n.message.includes("Nothing to add"))).toBe(true);
   });
 
   it("rejects a non-GitHub repo URL", async () => {
@@ -283,11 +328,13 @@ describe("dpi console — handleConsoleResult routing", () => {
     expect(existsSync(join(repoPath, "profiles", "gateways", "ser7-cpa.json"))).toBe(false);
   });
 
-  it("delete on a repo item keeps the binding and notifies", async () => {
+  it("delete on a repo item clears the dpi-agent-repo-key credential and keeps the binding", async () => {
     useTempHome();
+    writeCredential("dpi-agent-repo-key", "k");
     const { ctx, state } = makeCtx();
     const next = await handleConsoleResult(ctx, { action: "delete", item: repoItem() });
     expect(next).toBe("reopen");
+    expect(readCredential("dpi-agent-repo-key")).toBeNull(); // 删的是 binder 的凭证引用，不是 "current"
     expect(state.notifyCalls.some((n) => n.message.includes("Repo binding kept"))).toBe(true);
   });
 

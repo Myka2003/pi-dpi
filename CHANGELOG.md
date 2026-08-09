@@ -1,12 +1,12 @@
+# Changelog
+
+All notable changes to pi-dpi will be documented in this file.
+
 ## 0.8.38
 
 - Add unified `/dpi` console (gateways, repo, skills, extensions list with add/delete/status keys).
 - Add local credential store (0600) and gateway profile writer with immediate commit+push.
 - Add repo binder for GitHub SSH keys.
-
-# Changelog
-
-All notable changes to pi-dpi will be documented in this file.
 
 ## 0.8.37
 

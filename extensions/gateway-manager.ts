@@ -65,7 +65,7 @@ function formatProfiles(items: GatewayProfile[], current: string): string {
     .join("\n");
 }
 
-async function useGateway(pi: ExtensionAPI, id: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function useGateway(pi: ExtensionAPI, id: string, ctx: ExtensionCommandContext): Promise<void> {
   const profile = findProfile(id);
   if (!profile) {
     ctx.ui.notify(`Unknown gateway: ${id || "(empty)"}`, "error");

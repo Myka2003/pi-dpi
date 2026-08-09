@@ -77,4 +77,26 @@ describe("gateway writer", () => {
     expect(deleteGatewayProfile(work, "apimart")).toBe(true);
     expect(existsSync(join(work, "profiles", "gateways", "apimart.json"))).toBe(false);
   });
+
+  it("reports committed=true when the commit succeeds but push fails", async () => {
+    const { work } = tempRepo();
+    // 把 origin 指向不存在的本地路径 → commit 成功、push 必然失败
+    execFileSync("git", ["-C", work, "remote", "set-url", "origin", join(tmpdir(), "gw-remote-gone")]);
+    const profile = buildGatewayProfile({
+      id: "apimart",
+      label: "APIMart",
+      baseUrl: "https://api.apimart.ai/v1",
+      credentialRef: "apimart-key",
+      providerId: "apimart",
+      api: "openai-completions",
+      models: [{ id: "gpt-5" }],
+    })!;
+    expect(writeGatewayProfile(work, profile)).toBe(true);
+    const result = await commitPushGateway(work, "apimart", "feat: add apimart gateway");
+    // commit 已成功：committed=true，push 失败只降级 pushed 并带 error
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(scanGatewayProfiles(work).some((p) => p.id === "apimart")).toBe(true);
+  });
 });

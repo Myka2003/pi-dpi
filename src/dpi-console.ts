@@ -31,6 +31,7 @@ import {
   writeGatewayProfile,
 } from "./gateway-writer.ts";
 import { runRegistryManager } from "./registry-manager.ts";
+import { bindRepoWithKey } from "./repo-binder.ts";
 import type { VimListItem, VimListResult } from "./vim-list-picker.ts";
 import { config as extManagerConfig, scanRegistryExtensions } from "../extensions/ext-manager.ts";
 import { config as skillManagerConfig, scanRegistrySkills } from "../extensions/skill-manager.ts";
@@ -164,7 +165,9 @@ export async function addGatewayFlow(
   );
 }
 
-/** add-repo（v1）：校验 GitHub URL → SSH key 落 credential store；clone 走 /dpi-repo repair */
+/** add-repo：GitHub URL + SSH key → bindRepoWithKey（写 ~/.ssh key/config、
+ * credential dpi-agent-repo-key、saveConfig、clone+sparse）；失败时通知错误，
+ * key/credential 保留供诊断（不再暂存孤儿 repo-<ts> credential）。 */
 export async function addRepoFlow(ctx: ExtensionCommandContext): Promise<void> {
   const repoUrl = ((await ctx.ui.input("GitHub repo (https://github.com/user/repo)", "")) ?? "").trim();
   if (!/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(repoUrl)) {
@@ -176,21 +179,25 @@ export async function addRepoFlow(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify("SSH private key required", "error");
     return;
   }
-  if (!writeCredential(`repo-${Date.now()}`, key)) {
-    ctx.ui.notify("Failed to store SSH key", "error");
+  const result = await bindRepoWithKey(repoUrl, key);
+  if (!result.ok) {
+    ctx.ui.notify(
+      `Repo bind failed: ${result.error ?? "unknown error"} — SSH key and credential kept for diagnosis`,
+      "warning",
+    );
     return;
   }
-  ctx.ui.notify("Repo binding staged — clone via /dpi-repo repair after SSH key materialized", "info");
+  ctx.ui.notify("Repo bound: SSH key installed, sparse clone ready", "info");
 }
 
 /**
  * 按键路由：
  * - add：gateway → addGatewayFlow；repo → addRepoFlow；skill/ext → 各自的
  *   registry manager（复用 runRegistryManager）
- * - delete：gateway → 删 profile + commit；repo → 保留绑定提示；skill/ext →
- *   registry manager
+ * - delete：gateway → 删 profile + commit；repo → 清 dpi-agent-repo-key 凭证（绑定保留）；
+ *   skill/ext → registry manager
  * - status：gateway → checkGatewayHealth 报告；repo/skill/ext → 摘要
- * - pick：gateway → use 提示（applyProfile 接线在扩展层）；repo → status 提示
+ * - pick：gateway/skill/ext 在扩展层处理（useGateway / 名称+描述）；repo → status 提示
  * 返回 "reopen" 表示重开列表（注册表可能已变化），"done" 表示退出控制台。
  */
 export async function handleConsoleResult(
@@ -198,7 +205,19 @@ export async function handleConsoleResult(
   result: VimListResult<ConsoleItemData>,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<"reopen" | "done"> {
-  if (!result.item) return result.action === "add" ? "reopen" : "done";
+  if (!result.item) {
+    if (result.action === "add") {
+      // 空列表 + add：未绑定 repo 时直接走 addRepoFlow（绑定成功后重开列表）；
+      // 已绑定则无可添加对象，通知后退出，避免无限重开空列表。
+      if (!loadConfig().repoUrl) {
+        await addRepoFlow(ctx);
+        return "reopen";
+      }
+      ctx.ui.notify("Nothing to add — bind a repo or add a gateway from the list", "info");
+      return "done";
+    }
+    return "done";
+  }
   const item = result.item.data;
 
   if (result.action === "add") {
@@ -224,7 +243,8 @@ export async function handleConsoleResult(
   }
 
   if (result.action === "delete" && item.kind === "repo") {
-    deleteCredential(item.id);
+    // 删除 addRepoFlow/binder 使用的凭证引用（~/.ssh key/config 与绑定保留，可再登录）
+    deleteCredential("dpi-agent-repo-key");
     ctx.ui.notify("Repo binding kept; use /dpi-agent-login to rebind", "info");
     return "reopen";
   }

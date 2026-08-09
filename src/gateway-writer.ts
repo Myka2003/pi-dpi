@@ -58,11 +58,20 @@ export async function commitPushGateway(
     const { stdout } = await gitIn(repoPath, ["status", "--porcelain", "--", file], opts);
     if (stdout.trim().length === 0) return { committed: false, pushed: false };
     await gitIn(repoPath, ["commit", "-m", message], opts);
+  } catch (error) {
+    return {
+      committed: false,
+      pushed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  // commit 已成功：committed=true 立即成立；push 失败只降级 pushed
+  try {
     await gitIn(repoPath, ["push"], { ...opts, timeoutMs: 60000 });
     return { committed: true, pushed: true };
   } catch (error) {
     return {
-      committed: false,
+      committed: true,
       pushed: false,
       error: error instanceof Error ? error.message : String(error),
     };
