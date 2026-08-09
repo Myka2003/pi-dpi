@@ -2,6 +2,10 @@
 
 All notable changes to pi-dpi will be documented in this file.
 
+## 0.8.45
+
+- Gateway profile schema 2: API keys stored directly in the (private) repo; console adds providers with address+key; schema 1 stays compatible.
+
 ## 0.8.44
 
 - Gateway commits survive non-fast-forward pushes (pull --rebase --autostash retry) on shared repos.
